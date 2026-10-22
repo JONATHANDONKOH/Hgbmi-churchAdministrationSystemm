@@ -17,6 +17,13 @@ const Permission = {
     return rows;
   },
 
+  // Just the names, used to compare the table with ALL_PERMISSIONS
+  async findAllNames() {
+    const { rows } = await pool.query(`SELECT name FROM permissions`);
+
+    return rows.map((row) => row.name);
+  },
+
   async findById(id) {
     const { rows } = await pool.query(
       `SELECT
@@ -34,8 +41,18 @@ const Permission = {
     return rows[0] || null;
   },
 
-  // Returns the exact permission names stored in the database
-  // for a user: user_permissions -> permissions
+  // Used to check that every ticked id really exists
+  async findByIds(ids) {
+    const { rows } = await pool.query(
+      `SELECT id, name FROM permissions WHERE id = ANY($1::int[])`,
+      [ids]
+    );
+
+    return rows;
+  },
+
+  // Exact permission names a user holds: user_permissions -> permissions.
+  // This is what permissionMiddleware calls.
   async findNamesByUserId(userId) {
     const { rows } = await pool.query(
       `SELECT p.name
@@ -48,13 +65,31 @@ const Permission = {
     return rows.map((row) => row.name);
   },
 
-  // Replaces all of a user's permissions with the given ids
-  async assignToUser(userId, permissionIds = []) {
-    const client = await pool.connect();
+  // Full rows for a user, used to pre-tick the checkboxes
+  async findByUserId(userId) {
+    const { rows } = await pool.query(
+      `SELECT
+         p.id,
+         p.name,
+         p.description,
+         p.category_id,
+         c.name AS category_name
+       FROM user_permissions up
+       JOIN permissions p ON p.id = up.permission_id
+       LEFT JOIN permission_categories c ON c.id = p.category_id
+       WHERE up.user_id = $1
+       ORDER BY c.name NULLS LAST, p.name`,
+      [userId]
+    );
 
-    try {
-      await client.query('BEGIN');
+    return rows;
+  },
 
+  // Replaces all of a user's permissions with the given ids.
+  // Pass `db` (a transaction client) to run inside a bigger transaction;
+  // otherwise it opens its own.
+  async assignToUser(userId, permissionIds = [], db) {
+    const run = async (client) => {
       await client.query(
         `DELETE FROM user_permissions WHERE user_id = $1`,
         [userId]
@@ -68,7 +103,15 @@ const Permission = {
           [userId, permissionIds]
         );
       }
+    };
 
+    if (db) return run(db);
+
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+      await run(client);
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');

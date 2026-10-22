@@ -6,6 +6,13 @@ const cookieParser = require('cookie-parser');
 
 const authRoutes = require('./route/authRoute');
 const permissionRoutes = require('./route/permissionRoute');
+const userPermissionRoutes = require('./route/userPermissionRoute');
+const groupsRoutes = require('./route/groupsRoute');
+const userGroupRoutes = require('./route/userGroupRoute');
+const eventRoutes = require('./route/eventRoute');
+const meetingRoutes = require('./route/meetingRoute');
+const requestRoutes = require('./route/requestRoute');
+const superAdminRoutes = require('./route/superAdminRoute');
 
 const app = express();
 
@@ -23,6 +30,13 @@ app.use(express.urlencoded({ extended: true }));
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/permissions', permissionRoutes);
+app.use('/api/user-permissions', userPermissionRoutes);
+app.use('/api/groups', groupsRoutes);
+app.use('/api/user-groups', userGroupRoutes);
+app.use('/api/events', eventRoutes);
+app.use('/api/meetings', meetingRoutes);
+app.use('/api/requests', requestRoutes);
+app.use('/api/super-admin', superAdminRoutes);
 
 // Health check
 app.get('/', (req, res) => {

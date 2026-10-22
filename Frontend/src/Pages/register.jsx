@@ -50,7 +50,7 @@ export default function RegisterSuperAdmin({ onSubmit }) {
     try {
       setLoading(true);
       await (onSubmit || registerSuperAdmin)(formData);
-      navigate('/dashboard');
+      navigate('/super-admin/dashboard', { replace: true });
     } catch (err) {
       setError(err?.message || 'Something went wrong. Please try again.');
     } finally {
@@ -79,10 +79,10 @@ export default function RegisterSuperAdmin({ onSubmit }) {
           {/* Card styling to match the reference: rounded-2xl, soft shadow, generous padding */}
           <div className="bg-white rounded-2xl shadow-[0_10px_40px_-12px_rgba(16,42,84,0.15)] px-10 py-12">
             <h2 className="text-[#16325C] text-[32px] font-bold leading-tight tracking-tight">
-              Welcome Back
+              Create Account
             </h2>
             <p className="text-slate-500 text-[14px] mt-2 leading-relaxed">
-              Sign in to your HGBMI account to access your dashboard and resources.
+              Register a new Super Admin account for HGBMI.
             </p>
 
             <form onSubmit={handleSubmit} className="mt-8 space-y-5">

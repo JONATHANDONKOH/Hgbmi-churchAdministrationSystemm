@@ -10,11 +10,12 @@ import {
   ChevronUp,
   ShieldCheck,
 } from 'lucide-react';
+import { useAuth } from '../Context/authContext';
 
 const API_URL =
   import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-const ADMIN_CREATE_URL = `${API_URL}/api/admins`;
+const ADMIN_CREATE_URL = `${API_URL}/api/auth/register`;
 
 const emptyForm = {
   fullName: '',
@@ -25,6 +26,9 @@ const emptyForm = {
 };
 
 export default function CreateAdministrator({ onSubmit, onCancel }) {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'super_admin';
+
   const [formData, setFormData] = useState(emptyForm);
 
   const [showPassword, setShowPassword] = useState(false);
@@ -46,6 +50,12 @@ export default function CreateAdministrator({ onSubmit, onCancel }) {
     setPermissionsLoading(true);
     setPermissionsError('');
 
+    if (!isSuperAdmin) {
+      setPermissions([]);
+      setPermissionsLoading(false);
+      return;
+    }
+
     try {
       const response = await fetch(`${API_URL}/api/permissions`, {
         method: 'GET',
@@ -64,7 +74,7 @@ export default function CreateAdministrator({ onSubmit, onCancel }) {
     } finally {
       setPermissionsLoading(false);
     }
-  }, []);
+  }, [isSuperAdmin]);
 
   useEffect(() => {
     fetchPermissions();
@@ -190,60 +200,68 @@ export default function CreateAdministrator({ onSubmit, onCancel }) {
       return;
     }
 
-    const payload = {
-      ...formData,
-      permissionIds: Array.from(selectedIds),
+    const registerPayload = {
+      fullName: formData.fullName,
+      email: formData.email,
+      password: formData.password,
+      confirmPassword: formData.confirmPassword,
+      role: formData.role,
     };
 
     try {
       setLoading(true);
 
-      // ----------------------------------------------
-      // If parent provides onSubmit
-      // ----------------------------------------------
+      const res = await fetch(ADMIN_CREATE_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify(registerPayload),
+      });
 
-      if (onSubmit) {
-        await onSubmit(payload);
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || 'Failed to create administrator');
       }
 
-      // ----------------------------------------------
-      // Otherwise call API directly
-      // ----------------------------------------------
+      if (selectedIds.size > 0) {
+        const permissionRes = await fetch(
+          `${API_URL}/api/user-permissions/${data.user.id}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include',
+            body: JSON.stringify({
+              permissionIds: Array.from(selectedIds),
+            }),
+          }
+        );
 
-      else {
-        const res = await fetch(ADMIN_CREATE_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          credentials: 'include',
-          body: JSON.stringify(payload),
-        });
+        const permissionData = await permissionRes.json();
 
-        const data = await res.json();
-
-        if (!res.ok) {
+        if (!permissionRes.ok) {
           throw new Error(
-            data.message ||
-              'Failed to create administrator'
+            permissionData.message ||
+              'Administrator was created, but permissions could not be assigned'
           );
         }
       }
 
-      // ----------------------------------------------
-      // Reset the form before showing the success message.
-      // ----------------------------------------------
-
       resetForm();
       setSuccess('Administrator created successfully.');
-
     } catch (err) {
       console.error(err);
 
-      setError(
-        err?.message ||
-          'Something went wrong. Please try again.'
-      );
+      if (err?.message === 'Administrator was created, but permissions could not be assigned') {
+        setError('Administrator was created, but permissions could not be assigned');
+        return;
+      }
+
+      setError(err?.message || 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -461,8 +479,14 @@ export default function CreateAdministrator({ onSubmit, onCancel }) {
               </label>
             </div>
 
-            {permissionsLoading && <p className="text-[13px] text-slate-400">Loading permissions...</p>}
-            {permissionsError && (
+            {!isSuperAdmin && !permissionsLoading && (
+              <p className="text-[13px] text-amber-600">
+                Only super admins can load and assign all permissions.
+              </p>
+            )}
+
+            {isSuperAdmin && permissionsLoading && <p className="text-[13px] text-slate-400">Loading permissions...</p>}
+            {isSuperAdmin && permissionsError && (
               <div className="flex items-center justify-between gap-3">
                 <p role="alert" className="text-[13px] text-red-600">{permissionsError}</p>
                 <button type="button" onClick={fetchPermissions} className="text-[13px] font-medium text-slate-700 underline">
@@ -470,7 +494,7 @@ export default function CreateAdministrator({ onSubmit, onCancel }) {
                 </button>
               </div>
             )}
-            {!permissionsLoading && !permissionsError && visibleCategories.length === 0 && (
+            {isSuperAdmin && !permissionsLoading && !permissionsError && visibleCategories.length === 0 && (
               <p className="text-[13px] text-slate-400">No permissions match your search.</p>
             )}
 

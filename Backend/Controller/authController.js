@@ -1,14 +1,23 @@
-const jwt = require('jsonwebtoken');
-const User = require('../models/usersModel');
 
-const signToken = (id, role) =>
+const jwt = require('jsonwebtoken');
+
+const User = require('../models/usersModel');
+const GroupsModel = require('../models/groupsModel');
+
+// ============================================================
+// JWT
+// ============================================================
+
+const signToken = (id, role, expiresIn) =>
   jwt.sign(
     { id, role },
     process.env.JWT_SECRET,
-    {
-      expiresIn: process.env.JWT_EXPIRES_IN || '1d',
-    }
+    { expiresIn }
   );
+
+// ============================================================
+// COOKIE OPTIONS
+// ============================================================
 
 const cookieOptions = {
   httpOnly: true,
@@ -17,93 +26,95 @@ const cookieOptions = {
   maxAge: 24 * 60 * 60 * 1000,
 };
 
-// Readable by frontend JS – UI use only, never trusted by the server
 const userCookieOptions = {
   ...cookieOptions,
   httpOnly: false,
 };
 
-const setAuthCookies = (res, user) => {
-  const token = signToken(user.id, user.role);
+// ============================================================
+// AUTH COOKIES
+// ============================================================
 
-  res.cookie('token', token, cookieOptions);
+const setAuthCookies = (res, user, rememberMe = false) => {
+  const expiresIn = rememberMe ? '30d' : '1d';
+
+  const maxAge = rememberMe
+    ? 30 * 24 * 60 * 60 * 1000
+    : 24 * 60 * 60 * 1000;
+
+  const token = signToken(
+    user.id,
+    user.role,
+    expiresIn
+  );
+
+  res.cookie('token', token, {
+    ...cookieOptions,
+    maxAge,
+  });
+
+  // This cookie is only for frontend display.
+  // The server must trust the verified JWT, not this cookie.
   res.cookie(
     'user',
-    JSON.stringify({ id: user.id, role: user.role }),
-    userCookieOptions
+    JSON.stringify({
+      id: user.id,
+      role: user.role,
+    }),
+    {
+      ...userCookieOptions,
+      maxAge,
+    }
   );
 };
 
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// ============================================================
+// GROUP INFORMATION
+// ============================================================
 
-// POST /api/auth/register-super-admin
-exports.createSuperAdmin = async (req, res) => {
+const getUserWithGroups = async (user) => {
+  const groups = await GroupsModel.findGroupsByUserId(
+    user.id
+  );
+
+  return {
+    id: user.id,
+    full_name: user.full_name,
+    email: user.email,
+    role: user.role,
+    created_at: user.created_at,
+    groups,
+  };
+};
+
+// ============================================================
+// CHECK EXISTING SESSION
+// ============================================================
+
+const hasValidSession = async (req) => {
   try {
-    const {
-      fullName,
-      email,
-      password,
-      confirmPassword,
-    } = req.body;
+    const token = req.cookies?.token;
 
-    if (!fullName || !email || !password || !confirmPassword) {
-      return res.status(400).json({
-        message: 'All fields are required',
-      });
+    if (!token) {
+      return false;
     }
 
-    if (password !== confirmPassword) {
-      return res.status(400).json({
-        message: 'Passwords do not match',
-      });
-    }
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET
+    );
 
-    if (password.length < 8) {
-      return res.status(400).json({
-        message: 'Password must be at least 8 characters',
-      });
-    }
-
-    const existingSuperAdmin = await User.findSuperAdmin();
-
-    if (existingSuperAdmin) {
-      return res.status(403).json({
-        message: 'Super Admin has already been registered',
-      });
-    }
-
-    const existingUser = await User.findByEmail(email);
-
-    if (existingUser) {
-      return res.status(409).json({
-        message: 'Email already in use',
-      });
-    }
-
-    const superAdmin = await User.create({
-      fullName,
-      email,
-      password,
-      role: 'super_admin',
-    });
-
-    setAuthCookies(res, superAdmin);
-
-    return res.status(201).json({
-      message: 'Super Admin created successfully',
-      user: superAdmin,
-    });
-
+    return Boolean(await User.findById(decoded.id));
   } catch (err) {
-    console.error(err);
-
-    return res.status(500).json({
-      message: 'Server error',
-    });
+    return false;
   }
 };
 
-// POST /api/auth/register  (regular users only)
+// ============================================================
+// REGISTER
+// POST /api/auth/register
+// ============================================================
+
 exports.register = async (req, res) => {
   try {
     const {
@@ -113,13 +124,22 @@ exports.register = async (req, res) => {
       confirmPassword,
     } = req.body;
 
-    if (!fullName || !email || !password || !confirmPassword) {
+    if (
+      !fullName ||
+      !email ||
+      !password ||
+      !confirmPassword
+    ) {
       return res.status(400).json({
         message: 'All fields are required',
       });
     }
 
-    if (!emailRegex.test(email)) {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailRegex.test(normalizedEmail)) {
       return res.status(400).json({
         message: 'Invalid email address',
       });
@@ -137,9 +157,13 @@ exports.register = async (req, res) => {
       });
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
+    // Public registration must not allow users to
+    // assign themselves privileged roles.
+    const role = 'user';
 
-    const existingUser = await User.findByEmail(normalizedEmail);
+    const existingUser = await User.findByEmail(
+      normalizedEmail
+    );
 
     if (existingUser) {
       return res.status(409).json({
@@ -147,23 +171,27 @@ exports.register = async (req, res) => {
       });
     }
 
-    // Role is always forced to 'user' – never read from req.body
+    const loggedInAlready = await hasValidSession(req);
+
     const user = await User.create({
       fullName: fullName.trim(),
       email: normalizedEmail,
       password,
-      role: 'user',
+      role,
     });
 
-    setAuthCookies(res, user);
+    if (!loggedInAlready) {
+      setAuthCookies(res, user);
+    }
+
+    const userWithGroups = await getUserWithGroups(user);
 
     return res.status(201).json({
       message: 'Account created successfully',
-      user,
+      user: userWithGroups,
     });
-
   } catch (err) {
-    console.error(err);
+    console.error('Register error:', err);
 
     return res.status(500).json({
       message: 'Server error',
@@ -171,10 +199,101 @@ exports.register = async (req, res) => {
   }
 };
 
-// POST /api/auth/login  (works for every role)
+// ============================================================
+// REGISTER SUPER ADMIN
+// POST /api/auth/register-super-admin
+// ============================================================
+
+exports.createSuperAdmin = async (req, res) => {
+  try {
+    const {
+      fullName,
+      email,
+      password,
+      confirmPassword,
+    } = req.body;
+
+    if (
+      !fullName ||
+      !email ||
+      !password ||
+      !confirmPassword
+    ) {
+      return res.status(400).json({
+        message: 'All fields are required',
+      });
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({
+        message: 'Passwords do not match',
+      });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        message: 'Password must be at least 8 characters',
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const existingSuperAdmin = await User.findSuperAdmin();
+
+    if (existingSuperAdmin) {
+      return res.status(403).json({
+        message: 'Super Admin has already been registered',
+      });
+    }
+
+    const existingUser = await User.findByEmail(
+      normalizedEmail
+    );
+
+    if (existingUser) {
+      return res.status(409).json({
+        message: 'Email already in use',
+      });
+    }
+
+    const superAdmin = await User.create({
+      fullName: fullName.trim(),
+      email: normalizedEmail,
+      password,
+      role: 'super_admin',
+    });
+
+    setAuthCookies(res, superAdmin);
+
+    const userWithGroups = await getUserWithGroups(
+      superAdmin
+    );
+
+    return res.status(201).json({
+      message: 'Super Admin created successfully',
+      user: userWithGroups,
+    });
+  } catch (err) {
+    console.error('Create super admin error:', err);
+
+    return res.status(500).json({
+      message: 'Server error',
+    });
+  }
+};
+
+// ============================================================
+// LOGIN
+// POST /api/auth/login
+// ============================================================
+
 exports.login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const {
+      email,
+      password,
+      rememberMe,
+    } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({
@@ -187,7 +306,11 @@ exports.login = async (req, res) => {
     );
 
     const valid =
-      user && (await User.comparePassword(password, user.password));
+      user &&
+      await User.comparePassword(
+        password,
+        user.password
+      );
 
     if (!valid) {
       return res.status(401).json({
@@ -195,21 +318,22 @@ exports.login = async (req, res) => {
       });
     }
 
-    setAuthCookies(res, user);
+    // Create the authentication cookies.
+    setAuthCookies(
+      res,
+      user,
+      rememberMe === true
+    );
+
+    // Fetch group membership after authentication succeeds.
+    const userWithGroups = await getUserWithGroups(user);
 
     return res.status(200).json({
       message: 'Logged in successfully',
-      user: {
-        id: user.id,
-        full_name: user.full_name,
-        email: user.email,
-        role: user.role,
-        created_at: user.created_at,
-      },
+      user: userWithGroups,
     });
-
   } catch (err) {
-    console.error(err);
+    console.error('Login error:', err);
 
     return res.status(500).json({
       message: 'Server error',
@@ -217,22 +341,37 @@ exports.login = async (req, res) => {
   }
 };
 
+// ============================================================
+// LOGOUT
 // POST /api/auth/logout
+// ============================================================
+
 exports.logout = (req, res) => {
   const clearOptions = {
     secure: cookieOptions.secure,
     sameSite: cookieOptions.sameSite,
   };
 
-  res.clearCookie('token', { ...clearOptions, httpOnly: true });
-  res.clearCookie('user', { ...clearOptions, httpOnly: false });
+  res.clearCookie('token', {
+    ...clearOptions,
+    httpOnly: true,
+  });
+
+  res.clearCookie('user', {
+    ...clearOptions,
+    httpOnly: false,
+  });
 
   return res.status(200).json({
     message: 'Logged out successfully',
   });
 };
 
+// ============================================================
+// GET CURRENT USER
 // GET /api/auth/me
+// ============================================================
+
 exports.getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
@@ -243,10 +382,14 @@ exports.getMe = async (req, res) => {
       });
     }
 
-    return res.status(200).json({ user });
+    // Restore the user's group information on page refresh.
+    const userWithGroups = await getUserWithGroups(user);
 
+    return res.status(200).json({
+      user: userWithGroups,
+    });
   } catch (err) {
-    console.error(err);
+    console.error('Get current user error:', err);
 
     return res.status(500).json({
       message: 'Server error',

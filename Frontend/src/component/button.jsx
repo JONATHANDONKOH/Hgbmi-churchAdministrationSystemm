@@ -1,12 +1,11 @@
-import { Link } from 'react-router-dom';
 import '../styles/ui.css';
 
-function Button() {
+export function Create({ onClick, type = 'button', label = 'Create' }) {
   return (
-    <Link className="my-button" to="/administrator-form">
-      Create Administrator
-    </Link>
+    <button type={type} className="my-button" onClick={onClick}>
+      {label}
+    </button>
   );
 }
 
-export default Button;
+export default Create;
