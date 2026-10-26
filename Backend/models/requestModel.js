@@ -1,3 +1,4 @@
+
 const pool = require('../Config/db');
 
 // Columns that are safe to send to the client.
@@ -18,7 +19,7 @@ const PUBLIC_COLUMNS = [
 const columns = (alias) =>
   PUBLIC_COLUMNS.map((name) => (alias ? `${alias}.${name}` : name)).join(', ');
 
-// Requests plus the names an administrator needs to see in a list
+// Requests plus the names an administrator needs to see in a list.
 const BASE_SELECT = `
   SELECT ${columns('r')},
          u.full_name AS requested_by_name,
@@ -28,8 +29,7 @@ const BASE_SELECT = `
   JOIN groups g ON g.id = r.group_id`;
 
 // Moves a PENDING request to approved/rejected and wipes any stored password
-// hash in the same statement. Returns null if it was not pending, which stops
-// a request from being reviewed twice.
+// hash in the same statement.
 const review = async (db, id, status, reviewedBy, reviewNote) => {
   const { rows } = await db.query(
     `UPDATE requests
@@ -47,7 +47,8 @@ const review = async (db, id, status, reviewedBy, reviewNote) => {
 };
 
 const Request = {
-  // passwordHash is only used by new-member requests (already bcrypt-hashed)
+  // Create a request.
+  // passwordHash is only used by new-member requests (already bcrypt-hashed).
   async create(
     { requestType, requestedBy, groupId, requestData, passwordHash = null },
     db = pool
@@ -57,20 +58,30 @@ const Request = {
          (request_type, requested_by, group_id, request_data, password_hash, status)
        VALUES ($1, $2, $3, $4::jsonb, $5, 'pending')
        RETURNING ${columns()}`,
-      [requestType, requestedBy, groupId, JSON.stringify(requestData), passwordHash]
+      [
+        requestType,
+        requestedBy,
+        groupId,
+        JSON.stringify(requestData),
+        passwordHash,
+      ]
     );
 
     return rows[0];
   },
 
+  // Find one request by ID.
   async findById(id, db = pool) {
-    const { rows } = await db.query(`${BASE_SELECT} WHERE r.id = $1`, [id]);
+    const { rows } = await db.query(
+      `${BASE_SELECT} WHERE r.id = $1`,
+      [id]
+    );
+
     return rows[0] || null;
   },
 
-  // Locks the row until COMMIT/ROLLBACK, so two administrators cannot
-  // approve the same request at once. Call it inside a transaction only.
-  // INTERNAL USE ONLY: this row includes password_hash, so never send it to the client.
+  // Internal use only: includes password_hash.
+  // Call inside a transaction.
   async findByIdForUpdate(id, db) {
     const { rows } = await db.query(
       `SELECT * FROM requests WHERE id = $1 FOR UPDATE`,
@@ -80,7 +91,7 @@ const Request = {
     return rows[0] || null;
   },
 
-  // Optional filters: status, requestType, requestedBy
+  // Find requests with optional filters.
   async findAll(
     { status, requestType, requestedBy, oldestFirst = false } = {},
     db = pool
@@ -103,39 +114,69 @@ const Request = {
       conditions.push(`r.requested_by = $${params.length}`);
     }
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const where =
+      conditions.length > 0
+        ? `WHERE ${conditions.join(' AND ')}`
+        : '';
+
     const direction = oldestFirst ? 'ASC' : 'DESC';
 
     const { rows } = await db.query(
-      `${BASE_SELECT} ${where} ORDER BY r.created_at ${direction}, r.id ${direction}`,
+      `${BASE_SELECT}
+       ${where}
+       ORDER BY r.created_at ${direction}, r.id ${direction}`,
       params
     );
 
     return rows;
   },
 
-  // Pending requests, oldest first, for administrator review
+  // Find pending requests, oldest first.
   async findPending(db = pool) {
-    return Request.findAll({ status: 'pending', oldestFirst: true }, db);
+    return Request.findAll(
+      { status: 'pending', oldestFirst: true },
+      db
+    );
   },
 
-  // Requests submitted by one user
+  // Find requests submitted by one user.
   async findByUser(userId, filters = {}, db = pool) {
-    return Request.findAll({ ...filters, requestedBy: userId }, db);
+    return Request.findAll(
+      { ...filters, requestedBy: userId },
+      db
+    );
   },
 
+  // Approve a pending request.
   async approve(id, { reviewedBy, reviewNote = null }, db = pool) {
     return review(db, id, 'approved', reviewedBy, reviewNote);
   },
 
+  // Reject a pending request.
   async reject(id, { reviewedBy, reviewNote = null }, db = pool) {
     return review(db, id, 'rejected', reviewedBy, reviewNote);
   },
 
-  // Is this user in this group (via user_groups)?
+  // Delete a request by ID.
+  // Returns the deleted request, or null if the ID does not exist.
+  async delete(id, db = pool) {
+    const { rows } = await db.query(
+      `DELETE FROM requests
+       WHERE id = $1
+       RETURNING ${columns()}`,
+      [id]
+    );
+
+    return rows[0] || null;
+  },
+
+  // Check whether a user belongs to a group.
   async isGroupMember(userId, groupId, db = pool) {
     const { rows } = await db.query(
-      `SELECT 1 FROM user_groups WHERE user_id = $1 AND group_id = $2 LIMIT 1`,
+      `SELECT 1
+       FROM user_groups
+       WHERE user_id = $1 AND group_id = $2
+       LIMIT 1`,
       [userId, groupId]
     );
 

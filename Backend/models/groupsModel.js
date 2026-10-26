@@ -27,7 +27,9 @@ const Group = {
 
   async findAll() {
     const { rows } = await pool.query(
-      `SELECT * FROM groups ORDER BY name`
+      `SELECT *
+       FROM groups
+       ORDER BY name`
     );
 
     return rows;
@@ -67,7 +69,6 @@ const Group = {
     return rows;
   },
 
-  // Get all groups that a particular user belongs to.
   async findGroupsByUserId(userId) {
     const { rows } = await pool.query(
       `SELECT
@@ -87,6 +88,18 @@ const Group = {
     );
 
     return rows;
+  },
+
+  // Delete a group by ID.
+  async delete(id) {
+    const { rows } = await pool.query(
+      `DELETE FROM groups
+       WHERE id = $1
+       RETURNING *`,
+      [id]
+    );
+
+    return rows[0] || null;
   },
 };
 

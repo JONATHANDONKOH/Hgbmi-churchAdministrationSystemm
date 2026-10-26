@@ -19,4 +19,7 @@ router.get('/:id', protect, RequestsController.findById);
 router.patch('/:id/approve', protect, requirePermission('approve_requests'), RequestsController.approve);
 router.patch('/:id/reject', protect, requirePermission('reject_requests'), RequestsController.reject);
 
+// Delete a request (administrators only)
+router.delete('/:id', protect, requirePermission('delete_requests'), RequestsController.remove);
+
 module.exports = router;

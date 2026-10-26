@@ -1,122 +1,193 @@
-
-import { useEffect, useMemo, useState } from 'react';
-import SearchBar from '../../component/searchBar.jsx';
+import { useCallback, useEffect, useState } from 'react';
+import SearchBar from '../../component/searchBar';
+import { Create } from '../../component/button';
 import '../../styles/administrationManagement.css';
 import '../../styles/ui.css';
 
-const API_BASE = (
+const API_URL = (
   import.meta.env.VITE_API_URL || 'http://localhost:5000'
-).replace(/\/$/, '');
+).replace(/\/+$/, '');
 
-const roleOptions = [
-  { role: 'member', label: 'Members' },
-  { role: 'cell_leader', label: 'Cell Leaders' },
-  { role: 'assistant_leader', label: 'Assistant Leaders' },
-];
-
-const roleLabels = {
-  super_admin: 'Super Administrator',
-  admin: 'Administrator',
-  group_leader: 'Group Leader',
-  cell_leader: 'Cell Leader',
-  assistant_leader: 'Assistant Leader',
-  member: 'Member',
-  women_leader: 'Women Leader',
-};
-
-export default function CellLeadersPage() {
-  const [groups, setGroups] = useState([]);
-  const [selectedGroup, setSelectedGroup] = useState('');
-  const [members, setMembers] = useState([]);
-  const [selectedRole, setSelectedRole] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [loadingGroups, setLoadingGroups] = useState(true);
-  const [loadingMembers, setLoadingMembers] = useState(false);
+export default function CellMembersPage({ groupId }) {
+  const [showForm, setShowForm] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
-  // Member detail modal state
-  const [detailMember, setDetailMember] = useState(null);
-  const [editableRole, setEditableRole] = useState('');
-  const [requestLoading, setRequestLoading] = useState(false);
-  const [requestMessage, setRequestMessage] = useState('');
-  const [requestError, setRequestError] = useState('');
+  const [members, setMembers] = useState([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [membersError, setMembersError] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
-  // Fetch cell groups.
-  useEffect(() => {
-    const controller = new AbortController();
+  const [formData, setFormData] = useState({
+    full_name: '',
+    email: '',
+    phone: '',
+    password: '',
+  });
 
-    const fetchGroups = async () => {
-      try {
-        setLoadingGroups(true);
-        setError('');
+  const validGroupId =
+    groupId !== undefined &&
+    groupId !== null &&
+    String(groupId).trim() !== '' &&
+    Number.isSafeInteger(Number(groupId)) &&
+    Number(groupId) > 0;
 
-        const response = await fetch(`${API_BASE}/api/groups`, {
-          credentials: 'include',
-          signal: controller.signal,
-        });
+  const styles = {
+    backdrop: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 1000,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '20px',
+      background: 'rgba(15, 23, 42, 0.55)',
+      overflowY: 'auto',
+    },
+    modal: {
+      width: '100%',
+      maxWidth: '520px',
+      maxHeight: 'calc(100vh - 40px)',
+      overflowY: 'auto',
+      padding: '26px',
+      borderRadius: '16px',
+      background: '#fff',
+      color: '#111827',
+      boxShadow: '0 20px 60px rgba(0, 0, 0, 0.2)',
+      boxSizing: 'border-box',
+    },
+    modalHeader: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      gap: '16px',
+      marginBottom: '24px',
+    },
+    eyebrow: {
+      margin: '0 0 6px',
+      color: '#6b7280',
+      fontSize: '12px',
+      fontWeight: 600,
+      textTransform: 'uppercase',
+      letterSpacing: '1px',
+    },
+    title: {
+      margin: '4px 0 8px',
+      fontSize: '22px',
+    },
+    description: {
+      margin: 0,
+      color: '#6b7280',
+      fontSize: '14px',
+      lineHeight: 1.5,
+    },
+    closeButton: {
+      border: 'none',
+      background: 'transparent',
+      color: '#6b7280',
+      fontSize: '28px',
+      cursor: 'pointer',
+    },
+    field: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '7px',
+      marginBottom: '18px',
+    },
+    label: {
+      fontSize: '14px',
+      fontWeight: 600,
+    },
+    input: {
+      width: '100%',
+      boxSizing: 'border-box',
+      padding: '12px 13px',
+      border: '1px solid #d1d5db',
+      borderRadius: '8px',
+      background: '#fff',
+      color: '#111827',
+      font: 'inherit',
+      outline: 'none',
+    },
+    hint: {
+      color: '#6b7280',
+      fontSize: '12px',
+      lineHeight: 1.5,
+    },
+    actions: {
+      display: 'flex',
+      justifyContent: 'flex-end',
+      flexWrap: 'wrap',
+      gap: '10px',
+      marginTop: '24px',
+    },
+    cancelButton: {
+      padding: '11px 17px',
+      border: '1px solid #d1d5db',
+      borderRadius: '8px',
+      background: '#fff',
+      color: '#374151',
+      font: 'inherit',
+      fontWeight: 600,
+      cursor: 'pointer',
+    },
+    submitButton: {
+      padding: '11px 17px',
+      border: '1px solid #374151',
+      borderRadius: '8px',
+      background: '#374151',
+      color: '#fff',
+      font: 'inherit',
+      fontWeight: 600,
+      cursor: 'pointer',
+    },
+    error: {
+      marginBottom: '16px',
+      padding: '12px 14px',
+      borderRadius: '8px',
+      background: '#fef2f2',
+      color: '#b91c1c',
+      fontSize: '14px',
+    },
+    success: {
+      marginBottom: '16px',
+      padding: '12px 14px',
+      borderRadius: '8px',
+      background: '#ecfdf5',
+      color: '#065f46',
+      fontSize: '14px',
+    },
+    empty: {
+      padding: '24px',
+      color: '#6b7280',
+      textAlign: 'center',
+    },
+    loadingText: {
+      padding: '24px',
+      color: '#6b7280',
+      textAlign: 'center',
+    },
+  };
 
-        if (!response.ok) {
-          throw new Error('Failed to fetch groups');
-        }
-
-        const data = await response.json();
-
-        if (!Array.isArray(data)) {
-          throw new Error('Invalid groups response');
-        }
-
-        const cells = data.filter(
-          (group) =>
-            String(group.type).toLowerCase() === 'cell'
-        );
-
-        setGroups(cells);
-
-        if (cells.length > 0) {
-          setSelectedGroup(String(cells[0].id));
-        } else {
-          setSelectedGroup('');
-          setMembers([]);
-        }
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          console.error('Fetch cells error:', err);
-          setError('Unable to load cells.');
-        }
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoadingGroups(false);
-        }
+  const fetchMembers = useCallback(
+    async (signal) => {
+      if (!validGroupId) {
+        setMembers([]);
+        setLoadingMembers(false);
+        return;
       }
-    };
 
-    fetchGroups();
-
-    return () => controller.abort();
-  }, []);
-
-  // Fetch members of the selected cell.
-  useEffect(() => {
-    if (!selectedGroup) {
-      setMembers([]);
-      setLoadingMembers(false);
-      return;
-    }
-
-    const controller = new AbortController();
-
-    const fetchMembers = async () => {
       try {
         setLoadingMembers(true);
-        setError('');
-        setMembers([]);
+        setMembersError('');
 
         const response = await fetch(
-          `${API_BASE}/api/user-groups/group/${selectedGroup}/members`,
+          `${API_URL}/api/user-groups/group/${Number(groupId)}/members`,
           {
             method: 'GET',
             credentials: 'include',
-            signal: controller.signal,
+            signal,
           }
         );
 
@@ -135,163 +206,112 @@ export default function CellLeadersPage() {
         setMembers(data);
       } catch (err) {
         if (err.name !== 'AbortError') {
-          console.error('Fetch members error:', err);
+          console.error('Fetch cell members error:', err);
           setMembers([]);
-          setError('Unable to load members for this cell.');
+          setMembersError('Unable to load members for this cell.');
         }
       } finally {
-        if (!controller.signal.aborted) {
+        if (!signal?.aborted) {
           setLoadingMembers(false);
         }
       }
-    };
+    },
+    [groupId, validGroupId]
+  );
 
-    fetchMembers();
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetchMembers(controller.signal);
 
     return () => controller.abort();
-  }, [selectedGroup]);
+  }, [fetchMembers]);
 
-  // Count users according to their database role.
-  const roleCounts = useMemo(() => {
-    const counts = {};
-
-    roleOptions.forEach(({ role }) => {
-      counts[role] = members.filter(
-        (member) => member.role === role
-      ).length;
-    });
-
-    return counts;
-  }, [members]);
-
-  const selectedGroupName =
-    groups.find(
-      (group) => String(group.id) === selectedGroup
-    )?.name || '';
-
-  // Display users belonging to the selected role.
-  const filteredMembers = useMemo(() => {
+  const filteredMembers = members.filter((member) => {
     const search = searchTerm.trim().toLowerCase();
 
-    return members.filter((member) => {
-      const matchesRole = member.role === selectedRole;
+    if (!search) return true;
 
-      const name = member.full_name || '';
-      const email = member.email || '';
-      const role = roleLabels[member.role] || member.role || '';
+    const name = member.full_name || member.name || '';
+    const email = member.email || '';
+    const role = member.role || '';
 
-      const matchesSearch =
-        `${name} ${email} ${role}`.toLowerCase().includes(search);
+    return `${name} ${email} ${role}`.toLowerCase().includes(search);
+  });
 
-      return matchesRole && matchesSearch;
-    });
-  }, [members, selectedRole, searchTerm]);
+  const handleChange = (e) => {
+    const { name, value } = e.target;
 
-  const handleGroupChange = (event) => {
-    setSelectedGroup(event.target.value);
-    setSelectedRole('');
-    setSearchTerm('');
+    setFormData((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
+  };
+
+  const closeForm = () => {
+    if (loading) return;
+
+    setShowForm(false);
     setError('');
   };
 
-  const handleRoleClick = (role) => {
-    setSelectedRole(role);
-    setSearchTerm('');
-  };
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
 
-  // Open the member detail modal.
-  const handleMemberClick = (member) => {
-    setDetailMember(member);
-    setEditableRole(
-      roleOptions.some((option) => option.role === member.role)
-        ? member.role
-        : 'member'
-    );
-    setRequestMessage('');
-    setRequestError('');
-  };
-
-  const closeDetailModal = () => {
-    if (requestLoading) return;
-
-    setDetailMember(null);
-    setEditableRole('');
-    setRequestMessage('');
-    setRequestError('');
-  };
-
-  // Submit a leadership assignment request.
-  const handleSendRequest = async () => {
-    if (!detailMember) return;
-
-    setRequestError('');
-    setRequestMessage('');
-
-    const requestedRole = editableRole.trim();
-
-    const targetUserId =
-      detailMember.id ??
-      detailMember.user_id ??
-      detailMember._id;
-
-    if (!selectedGroup) {
-      setRequestError('Please select a cell.');
-      return;
-    }
-
-    if (!targetUserId || !Number.isSafeInteger(Number(targetUserId))) {
-      setRequestError('Unable to identify the selected user.');
-      return;
-    }
-
-    if (!roleOptions.some((option) => option.role === requestedRole)) {
-      setRequestError('Please select a valid cell role.');
+    if (!validGroupId) {
+      setError('The cell group ID is missing or invalid.');
       return;
     }
 
     try {
-      setRequestLoading(true);
+      setLoading(true);
 
-      const payload = {
-        // All requests submitted by this form use this request type.
-        request_type: 'leader_assignment',
-
-        group_id: Number(selectedGroup),
-
-        request_data: {
-          // Existing user receiving the requested role.
-          target_user_id: Number(targetUserId),
-
-          // The role entered in the form.
-          requested_role: requestedRole,
-        },
-      };
-
-      const response = await fetch(`${API_BASE}/api/requests`, {
+      const response = await fetch(`${API_URL}/api/requests`, {
         method: 'POST',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          request_type: 'user',
+          group_id: Number(groupId),
+          request_data: {
+            full_name: formData.full_name.trim(),
+            email: formData.email.trim(),
+            phone: formData.phone.trim() || null,
+            password: formData.password,
+          },
+        }),
       });
 
       const result = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(
-          result.error || 'Failed to send the request.'
+          result.error ||
+            result.message ||
+            'Failed to submit cell membership request.'
         );
       }
 
-      setRequestMessage(
-        'Request submitted for administrator approval.'
+      setSuccess(
+        'Cell membership request submitted for administrator approval.'
       );
+
+      setFormData({
+        full_name: '',
+        email: '',
+        phone: '',
+        password: '',
+      });
+
+      setShowForm(false);
     } catch (err) {
-      console.error('Submit leadership request error:', err);
-      setRequestError(err.message || 'Something went wrong.');
+      setError(err.message || 'Something went wrong.');
     } finally {
-      setRequestLoading(false);
+      setLoading(false);
     }
   };
 
@@ -300,572 +320,282 @@ export default function CellLeadersPage() {
       <header className="dashboard-header">
         <div>
           <p className="dashboard-eyebrow">Cell</p>
-          <h1>Leadership and Members</h1>
-          <p>View cell membership by role.</p>
+          <h1>Members</h1>
         </div>
 
-        <div style={styles.groupSelector}>
-          <label htmlFor="cell-select" style={styles.labelText}>
-            Select Cell
-          </label>
+        <div className="dashboard-actions">
+          <SearchBar
+            placeholder="Search cell members"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
 
-          <select
-            id="cell-select"
-            value={selectedGroup}
-            onChange={handleGroupChange}
-            style={styles.selectInput}
-            disabled={loadingGroups || groups.length === 0}
+          <button
+            type="button"
+            className="my-button"
+            style={{ background: '#374151' }}
           >
-            <option value="">Select a cell</option>
+            Export
+          </button>
 
-            {groups.map((group) => (
-              <option key={group.id} value={String(group.id)}>
-                {group.name}
-              </option>
-            ))}
-          </select>
+          <Create
+            label="Create Member"
+            onClick={() => {
+              setError('');
+              setSuccess('');
+              setShowForm(true);
+            }}
+          />
         </div>
       </header>
 
-      {loadingGroups && (
-        <p style={styles.message}>Loading cells...</p>
+      {success && (
+        <div style={styles.success} role="status">
+          {success}
+        </div>
       )}
 
-      {!loadingGroups && groups.length === 0 && !error && (
-        <p style={styles.message}>No cells found.</p>
-      )}
-
-      {error && (
-        <p role="alert" style={styles.error}>
+      {error && !showForm && (
+        <div style={styles.error} role="alert">
           {error}
-        </p>
+        </div>
       )}
 
-      {selectedGroup && (
-        <>
-          <section
-            className="administration-stats"
-            aria-label="Cell role totals"
-          >
-            <article className="administration-card fellowship-summary-card">
-              <p className="administration-card-label">
-                {selectedGroupName}
-              </p>
+      {membersError && (
+        <div style={styles.error} role="alert">
+          {membersError}
+        </div>
+      )}
 
-              <p className="administration-card-value">
-                {loadingMembers ? '—' : members.length}
-              </p>
+      <section
+        className="administration-stats"
+        aria-label="Cell members summary"
+      >
+        <article className="administration-card fellowship-summary-card">
+          <p className="administration-card-label">Total members</p>
+          <p className="administration-card-value">
+            {loadingMembers ? '—' : members.length}
+          </p>
+          <p className="administration-card-detail">
+            Approved members in the cell
+          </p>
+        </article>
+      </section>
 
-              <p className="administration-card-detail">
-                Total users in this cell
-              </p>
-            </article>
-          </section>
+      <section
+        className="fellowship-member-panel"
+        aria-label="Cell members list"
+      >
+        <div className="fellowship-member-panel-header">
+          <h2>Cell member list</h2>
+          <span>
+            {loadingMembers
+              ? 'Loading...'
+              : `${filteredMembers.length} shown`}
+          </span>
+        </div>
 
-          <section style={styles.roleSection}>
-            <div style={styles.sectionHeader}>
-              <div>
-                <h2 style={styles.sectionTitle}>Cell Members by Role</h2>
-                <p style={styles.sectionDescription}>
-                  Select a role to view its users.
-                </p>
-              </div>
-            </div>
+        <div className="fellowship-member-list">
+          {loadingMembers ? (
+            <p style={styles.loadingText}>Loading cell members...</p>
+          ) : membersError ? (
+            <p style={styles.empty}>Unable to display cell members.</p>
+          ) : filteredMembers.length === 0 ? (
+            <p style={styles.empty}>
+              {members.length === 0
+                ? 'No members to display.'
+                : 'No members match your search.'}
+            </p>
+          ) : (
+            filteredMembers.map((member) => {
+              const name = member.full_name || member.name || 'Unknown';
+              const role = member.role || '—';
+              const cell = member.cell || member.team || '—';
+              const status = member.status || 'Active';
 
-            <div style={styles.roleGrid}>
-              {roleOptions.map((item) => (
-                <button
-                  key={item.role}
-                  type="button"
-                  onClick={() => handleRoleClick(item.role)}
-                  style={{
-                    ...styles.roleCard,
-                    ...(selectedRole === item.role
-                      ? styles.activeRoleCard
-                      : {}),
-                  }}
-                  aria-pressed={selectedRole === item.role}
-                  disabled={loadingMembers}
+              return (
+                <div
+                  key={member.id || member._id}
+                  className="fellowship-member-row"
                 >
-                  <span style={styles.roleCardLabel}>
-                    {item.label}
-                  </span>
-
-                  <span style={styles.roleCardCount}>
-                    {loadingMembers ? '—' : roleCounts[item.role]}
-                  </span>
-
-                  <span style={styles.roleCardFooter}>
-                    View {item.label.toLowerCase()}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          {selectedRole && (
-            <section
-              className="fellowship-member-panel"
-              aria-label="Users by selected role"
-            >
-              <div className="fellowship-member-panel-header">
-                <div>
-                  <h2>
-                    {roleOptions.find(
-                      (item) => item.role === selectedRole
-                    )?.label}
-                  </h2>
-
-                  <p style={styles.panelDescription}>
-                    {selectedGroupName}
-                  </p>
-                </div>
-
-                <span>
-                  {loadingMembers
-                    ? 'Loading...'
-                    : `${filteredMembers.length} shown`}
-                </span>
-              </div>
-
-              <div style={styles.listSearch}>
-                <SearchBar
-                  placeholder="Search by name or email"
-                  value={searchTerm}
-                  onChange={(event) =>
-                    setSearchTerm(event.target.value)
-                  }
-                />
-              </div>
-
-              {loadingMembers && (
-                <p style={styles.message}>Loading users...</p>
-              )}
-
-              {!loadingMembers &&
-                !error &&
-                filteredMembers.length === 0 && (
-                  <p style={styles.message}>
-                    {members.filter(
-                      (member) => member.role === selectedRole
-                    ).length === 0
-                      ? 'No users have this role in the selected cell.'
-                      : 'No users match your search.'}
-                  </p>
-                )}
-
-              {!loadingMembers && filteredMembers.length > 0 && (
-                <div className="fellowship-member-list">
-                  {filteredMembers.map((member) => (
-                    <div
-                      key={member.id ?? member.user_id ?? member._id}
-                      className="fellowship-member-row"
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleMemberClick(member)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          handleMemberClick(member);
-                        }
-                      }}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <div className="fellowship-member-meta">
-                        <div className="fellowship-member-avatar">
-                          {(member.full_name || '?')
-                            .charAt(0)
-                            .toUpperCase()}
-                        </div>
-
-                        <div>
-                          <p className="fellowship-member-name">
-                            {member.full_name}
-                          </p>
-
-                          <span className="fellowship-member-role">
-                            {roleLabels[member.role] || member.role}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div style={styles.memberEmail}>
-                        {member.email || 'No email available'}
-                      </div>
+                  <div className="fellowship-member-meta">
+                    <div className="fellowship-member-avatar">
+                      {name.charAt(0).toUpperCase()}
                     </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
-        </>
-      )}
 
-      {detailMember && (
+                    <div>
+                      <p className="fellowship-member-name">{name}</p>
+                      <span className="fellowship-member-role">
+                        {role}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="fellowship-member-cell">{cell}</div>
+
+                  <span
+                    className={`fellowship-member-status ${
+                      status === 'Present' || status === 'Active'
+                        ? 'status-present'
+                        : 'status-absent'
+                    }`}
+                  >
+                    {status}
+                  </span>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </section>
+
+      {showForm && (
         <div
           style={styles.backdrop}
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) closeDetailModal();
+            if (e.target === e.currentTarget) closeForm();
           }}
         >
           <section
             style={styles.modal}
             role="dialog"
             aria-modal="true"
-            aria-labelledby="member-detail-title"
+            aria-labelledby="create-cell-member-title"
           >
             <div style={styles.modalHeader}>
               <div>
-                <p style={styles.eyebrow}>Member details</p>
-
+                <p style={styles.eyebrow}>Cell</p>
                 <h2
-                  id="member-detail-title"
-                  style={styles.modalTitle}
+                  id="create-cell-member-title"
+                  style={styles.title}
                 >
-                  {detailMember.full_name || 'Unnamed member'}
+                  Create Member Request
                 </h2>
-
                 <p style={styles.description}>
-                  Review member information and request a cell role change.
-                  An administrator must approve the request.
+                  Enter the prospective cell member&apos;s details for
+                  administrator approval.
                 </p>
               </div>
 
               <button
                 type="button"
                 style={styles.closeButton}
-                onClick={closeDetailModal}
-                disabled={requestLoading}
-                aria-label="Close details"
+                onClick={closeForm}
+                disabled={loading}
+                aria-label="Close form"
               >
                 ×
               </button>
             </div>
 
-            {requestError && (
+            {error && (
               <div style={styles.error} role="alert">
-                {requestError}
+                {error}
               </div>
             )}
 
-            {requestMessage && (
-              <div style={styles.success} role="status">
-                {requestMessage}
-              </div>
-            )}
-
-            <div style={styles.detailGrid}>
-              <div style={styles.detailRow}>
-                <span style={styles.detailLabel}>Full name</span>
-                <span style={styles.detailValue}>
-                  {detailMember.full_name || '—'}
-                </span>
-              </div>
-
-              <div style={styles.detailRow}>
-                <span style={styles.detailLabel}>Email</span>
-                <span style={styles.detailValue}>
-                  {detailMember.email || '—'}
-                </span>
+            <form onSubmit={handleSubmit}>
+              <div style={styles.field}>
+                <label htmlFor="full_name" style={styles.label}>
+                  Full name
+                </label>
+                <input
+                  id="full_name"
+                  name="full_name"
+                  type="text"
+                  placeholder="Enter full name"
+                  value={formData.full_name}
+                  onChange={handleChange}
+                  style={styles.input}
+                  required
+                  autoComplete="name"
+                />
               </div>
 
-              <div style={styles.detailRow}>
-                <span style={styles.detailLabel}>Phone</span>
-                <span style={styles.detailValue}>
-                  {detailMember.phone_number || '—'}
-                </span>
+              <div style={styles.field}>
+                <label htmlFor="email" style={styles.label}>
+                  Email address
+                </label>
+                <input
+                  id="email"
+                  name="email"
+                  type="email"
+                  placeholder="Enter email address"
+                  value={formData.email}
+                  onChange={handleChange}
+                  style={styles.input}
+                  required
+                  autoComplete="email"
+                />
               </div>
 
-              <div style={styles.detailRow}>
-                <span style={styles.detailLabel}>Cell</span>
-                <span style={styles.detailValue}>
-                  {selectedGroupName || '—'}
-                </span>
+              <div style={styles.field}>
+                <label htmlFor="phone" style={styles.label}>
+                  Phone number
+                </label>
+                <input
+                  id="phone"
+                  name="phone"
+                  type="tel"
+                  placeholder="Enter phone number"
+                  value={formData.phone}
+                  onChange={handleChange}
+                  style={styles.input}
+                  autoComplete="tel"
+                />
               </div>
-            </div>
 
-            <div style={styles.field}>
-              <label htmlFor="member-role" style={styles.label}>
-                Requested role
-              </label>
+              <div style={styles.field}>
+                <label htmlFor="password" style={styles.label}>
+                  Initial password
+                </label>
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  placeholder="At least 8 characters"
+                  value={formData.password}
+                  onChange={handleChange}
+                  style={styles.input}
+                  minLength={8}
+                  maxLength={72}
+                  required
+                  autoComplete="new-password"
+                />
+                <small style={styles.hint}>
+                  This password will be used when the membership request
+                  is approved.
+                </small>
+              </div>
 
-              <select
-                id="member-role"
-                value={editableRole}
-                onChange={(e) => setEditableRole(e.target.value)}
-                style={styles.selectInput}
-                disabled={requestLoading || Boolean(requestMessage)}
-              >
-                {roleOptions.map((option) => (
-                  <option key={option.role} value={option.role}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+              <div style={styles.actions}>
+                <button
+                  type="button"
+                  style={{
+                    ...styles.cancelButton,
+                    opacity: loading ? 0.65 : 1,
+                  }}
+                  onClick={closeForm}
+                  disabled={loading}
+                >
+                  Cancel
+                </button>
 
-            <div style={styles.actions}>
-              <button
-                type="button"
-                style={styles.cancelButton}
-                onClick={closeDetailModal}
-                disabled={requestLoading}
-              >
-                Close
-              </button>
-
-              <button
-                type="button"
-                style={{
-                  ...styles.submitButton,
-                  opacity:
-                    requestLoading || requestMessage ? 0.65 : 1,
-                }}
-                onClick={handleSendRequest}
-                disabled={requestLoading || Boolean(requestMessage)}
-              >
-                {requestLoading ? 'Sending...' : 'Send Request'}
-              </button>
-            </div>
+                <button
+                  type="submit"
+                  style={{
+                    ...styles.submitButton,
+                    opacity: loading ? 0.65 : 1,
+                  }}
+                  disabled={loading}
+                >
+                  {loading ? 'Submitting...' : 'Submit Request'}
+                </button>
+              </div>
+            </form>
           </section>
         </div>
       )}
     </div>
   );
 }
-
-const styles = {
-  groupSelector: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-    minWidth: '240px',
-  },
-  labelText: {
-    fontSize: '13px',
-    fontWeight: 600,
-    color: '#374151',
-  },
-  selectInput: {
-    width: '100%',
-    border: '1px solid #d1d5db',
-    borderRadius: '10px',
-    padding: '10px 12px',
-    fontSize: '14px',
-    color: '#111827',
-    background: '#ffffff',
-    outline: 'none',
-  },
-  textInput: {
-    width: '100%',
-    boxSizing: 'border-box',
-    border: '1px solid #d1d5db',
-    borderRadius: '10px',
-    padding: '10px 12px',
-    fontSize: '14px',
-    color: '#111827',
-    background: '#ffffff',
-    outline: 'none',
-  },
-  roleSection: {
-    margin: '24px 0',
-  },
-  sectionHeader: {
-    marginBottom: '16px',
-  },
-  sectionTitle: {
-    margin: 0,
-    fontSize: '20px',
-    color: '#111827',
-  },
-  sectionDescription: {
-    margin: '6px 0 0',
-    color: '#6b7280',
-    fontSize: '14px',
-  },
-  roleGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
-    gap: '16px',
-  },
-  roleCard: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'flex-start',
-    gap: '12px',
-    width: '100%',
-    padding: '20px',
-    background: '#ffffff',
-    border: '1px solid #e5e7eb',
-    borderRadius: '14px',
-    textAlign: 'left',
-    cursor: 'pointer',
-    transition: 'border-color 0.2s ease',
-  },
-  activeRoleCard: {
-    border: '2px solid #6366f1',
-    background: '#eef2ff',
-  },
-  roleCardLabel: {
-    color: '#4b5563',
-    fontSize: '14px',
-    fontWeight: 600,
-  },
-  roleCardCount: {
-    color: '#111827',
-    fontSize: '30px',
-    fontWeight: 700,
-  },
-  roleCardFooter: {
-    color: '#6366f1',
-    fontSize: '12px',
-    fontWeight: 600,
-  },
-  panelDescription: {
-    margin: '5px 0 0',
-    color: '#6b7280',
-    fontSize: '13px',
-  },
-  listSearch: {
-    margin: '16px 0',
-    maxWidth: '380px',
-  },
-  memberEmail: {
-    color: '#6b7280',
-    fontSize: '13px',
-    overflowWrap: 'anywhere',
-  },
-  message: {
-    color: '#6b7280',
-    padding: '16px 0',
-  },
-  error: {
-    color: '#b91c1c',
-    padding: '12px 0',
-  },
-  backdrop: {
-    position: 'fixed',
-    inset: 0,
-    zIndex: 1000,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '20px',
-    background: 'rgba(15, 23, 42, 0.55)',
-    overflowY: 'auto',
-  },
-  modal: {
-    width: '100%',
-    maxWidth: '520px',
-    maxHeight: 'calc(100vh - 40px)',
-    overflowY: 'auto',
-    padding: '26px',
-    borderRadius: '16px',
-    background: '#fff',
-    color: '#111827',
-    boxShadow: '0 20px 60px rgba(0, 0, 0, 0.2)',
-    boxSizing: 'border-box',
-  },
-  modalHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: '16px',
-    marginBottom: '20px',
-  },
-  eyebrow: {
-    margin: '0 0 6px',
-    color: '#6b7280',
-    fontSize: '12px',
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    letterSpacing: '1px',
-  },
-  modalTitle: {
-    margin: '4px 0 8px',
-    fontSize: '22px',
-  },
-  description: {
-    margin: 0,
-    color: '#6b7280',
-    fontSize: '14px',
-    lineHeight: 1.5,
-  },
-  closeButton: {
-    border: 'none',
-    background: 'transparent',
-    color: '#6b7280',
-    fontSize: '28px',
-    cursor: 'pointer',
-  },
-  detailGrid: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-    marginBottom: '20px',
-    padding: '16px',
-    background: '#f9fafb',
-    borderRadius: '12px',
-    border: '1px solid #e5e7eb',
-  },
-  detailRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    gap: '12px',
-    fontSize: '14px',
-  },
-  detailLabel: {
-    color: '#6b7280',
-    fontWeight: 600,
-  },
-  detailValue: {
-    color: '#111827',
-    textAlign: 'right',
-    overflowWrap: 'anywhere',
-  },
-  field: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '7px',
-    marginBottom: '18px',
-  },
-  label: {
-    fontSize: '14px',
-    fontWeight: 600,
-  },
-  actions: {
-    display: 'flex',
-    justifyContent: 'flex-end',
-    flexWrap: 'wrap',
-    gap: '10px',
-    marginTop: '20px',
-  },
-  cancelButton: {
-    padding: '11px 17px',
-    border: '1px solid #d1d5db',
-    borderRadius: '8px',
-    background: '#fff',
-    color: '#374151',
-    font: 'inherit',
-    fontWeight: 600,
-    cursor: 'pointer',
-  },
-  submitButton: {
-    padding: '11px 17px',
-    border: '1px solid #374151',
-    borderRadius: '8px',
-    background: '#374151',
-    color: '#fff',
-    font: 'inherit',
-    fontWeight: 600,
-    cursor: 'pointer',
-  },
-  success: {
-    marginBottom: '16px',
-    padding: '12px 14px',
-    borderRadius: '8px',
-    background: '#ecfdf5',
-    color: '#065f46',
-    fontSize: '14px',
-  },
-};

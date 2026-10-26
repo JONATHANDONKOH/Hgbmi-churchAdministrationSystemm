@@ -1,13 +1,23 @@
-
 const pool = require('../Config/db');
 const bcrypt = require('bcryptjs');
-
 const Groups = require('../models/groupsModel');
 const User = require('../models/usersModel');
 const UserGroup = require('../models/userGroupScopeModel');
 const Requests = require('../models/requestModel');
 
-const REQUEST_TYPES = ['user', 'leader_assignment', 'event'];
+const REQUEST_TYPES = [
+  'user',
+  'leader_assignment',
+  'group_creation',
+  'event',
+];
+
+const GROUP_TYPES = [
+  'cell',
+  'fellowship',
+  'ministry',
+  'department',
+];
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -18,16 +28,59 @@ class HttpError extends Error {
 
 const getId = (value) => {
   const id = Number(value);
+
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 };
 
-// Validate and normalize request data.
+const normalizeRole = (value) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+const validateRequestedRole = (role) => {
+  if (
+    typeof role !== 'string' ||
+    !role.trim() ||
+    role.trim().length > 60 ||
+    !/^[a-zA-Z][a-zA-Z0-9 _-]*$/.test(role.trim())
+  ) {
+    throw new HttpError(
+      400,
+      'Enter a valid role using letters, numbers, spaces, underscores or hyphens. Maximum 60 characters.'
+    );
+  }
+
+  return role.trim().toLowerCase();
+};
+
+// Read user information regardless of whether the model returns
+// snake_case database fields or camelCase JavaScript fields.
+const getMemberInformation = (user) => {
+  if (!user) {
+    return null;
+  }
+
+  return {
+    id: getId(user.id),
+    full_name:
+      user.full_name ||
+      user.fullName ||
+      user.name ||
+      '',
+    email: user.email || '',
+    phone_number:
+      user.phone_number ||
+      user.phoneNumber ||
+      user.phone ||
+      '',
+    current_role: user.role || 'member',
+  };
+};
+
+// Validate request data before saving it.
 const validateRequestData = (type, data) => {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new HttpError(400, 'request_data must be an object');
   }
 
-  // New member request.
   if (type === 'user') {
     const { full_name, email, phone, password } = data;
 
@@ -70,23 +123,14 @@ const validateRequestData = (type, data) => {
     };
   }
 
-  // Leadership assignment for an existing group member.
   if (type === 'leader_assignment') {
     const targetId = getId(data.target_user_id);
+    const requestedRole = validateRequestedRole(data.requested_role);
 
-    const requestedRole =
-      typeof data.requested_role === 'string'
-        ? data.requested_role.trim().toLowerCase()
-        : '';
-
-    if (!targetId || !requestedRole) {
-      throw new HttpError(
-        400,
-        'target_user_id and requested_role are required'
-      );
+    if (!targetId) {
+      throw new HttpError(400, 'Valid target_user_id is required');
     }
 
-    // Accept any non-empty role entered by the requester.
     return {
       data: {
         target_user_id: targetId,
@@ -95,7 +139,59 @@ const validateRequestData = (type, data) => {
     };
   }
 
-  // Event request.
+  if (type === 'group_creation') {
+    const name =
+      typeof data.name === 'string' ? data.name.trim() : '';
+
+    const groupType =
+      typeof data.type === 'string'
+        ? data.type.trim().toLowerCase()
+        : '';
+
+    const parentGroupId = getId(data.parent_group_id);
+    const targetUserId = getId(data.target_user_id);
+    const requestedRole = validateRequestedRole(data.requested_role);
+
+    if (!name) {
+      throw new HttpError(400, 'New group name is required');
+    }
+
+    if (!GROUP_TYPES.includes(groupType)) {
+      throw new HttpError(400, 'Invalid new group type');
+    }
+
+    if (!parentGroupId) {
+      throw new HttpError(400, 'Valid parent_group_id is required');
+    }
+
+    if (!targetUserId) {
+      throw new HttpError(400, 'Valid target_user_id is required');
+    }
+
+    if (data.location != null && typeof data.location !== 'string') {
+      throw new HttpError(400, 'location must be a string');
+    }
+
+    if (
+      data.description != null &&
+      typeof data.description !== 'string'
+    ) {
+      throw new HttpError(400, 'description must be a string');
+    }
+
+    return {
+      data: {
+        name,
+        type: groupType,
+        parent_group_id: parentGroupId,
+        location: data.location?.trim() || null,
+        description: data.description?.trim() || null,
+        target_user_id: targetUserId,
+        requested_role: requestedRole,
+      },
+    };
+  }
+
   if (type === 'event') {
     if (
       typeof data.title !== 'string' ||
@@ -122,10 +218,7 @@ const validateRequestData = (type, data) => {
       throw new HttpError(400, 'Invalid event date or time range');
     }
 
-    if (
-      data.location != null &&
-      typeof data.location !== 'string'
-    ) {
+    if (data.location != null && typeof data.location !== 'string') {
       throw new HttpError(400, 'location must be a string');
     }
 
@@ -143,7 +236,7 @@ const validateRequestData = (type, data) => {
   throw new HttpError(400, 'Unsupported request type');
 };
 
-// Submit a member, leadership-assignment, or event request.
+// Submit a member, role assignment, group creation, or event request.
 exports.create = async (req, res) => {
   try {
     const body = req.body || {};
@@ -174,13 +267,19 @@ exports.create = async (req, res) => {
       throw new HttpError(404, 'Group not found');
     }
 
-    // Superadmins may submit for any group.
-    // Other submitters must be authorized leaders in the group.
-    if (req.user.role !== 'super_admin') {
-      const allowedRoles = ['group_leader', 'assistant_leader'];
+    if (normalizeRole(req.user.role) !== 'super_admin') {
+      const allowedRoles = [
+        'group_leader',
+        'assistant_leader',
+        'cell_leader',
+        'fellowship_leader',
+        'department_leader',
+        'ministry_leader',
+        'women_leader',
+      ];
 
       if (
-        !allowedRoles.includes(req.user.role) ||
+        !allowedRoles.includes(normalizeRole(req.user.role)) ||
         !(await UserGroup.hasGroupAccess(requesterId, groupId))
       ) {
         throw new HttpError(
@@ -198,7 +297,6 @@ exports.create = async (req, res) => {
     const { data } = validated;
     let passwordHash = null;
 
-    // Membership request handling.
     if (type === 'user') {
       const existingUser = await User.findByEmail(data.email);
 
@@ -209,8 +307,7 @@ exports.create = async (req, res) => {
       passwordHash = await bcrypt.hash(validated.password, 10);
     }
 
-    // Leadership assignment: selected user must exist and
-    // already belong to the selected group.
+    // Existing member role-assignment request.
     if (type === 'leader_assignment') {
       const target = await User.findById(data.target_user_id);
 
@@ -229,6 +326,67 @@ exports.create = async (req, res) => {
           'Selected user is not a member of this group'
         );
       }
+
+      const member = getMemberInformation(target);
+
+      // Save actual member information from the database.
+      data.selected_member = member;
+      data.full_name = member.full_name;
+      data.email = member.email;
+      data.phone_number = member.phone_number;
+      data.current_role = member.current_role;
+    }
+
+    // Request to create a new group and appoint its leader.
+    if (type === 'group_creation') {
+      if (data.parent_group_id !== groupId) {
+        throw new HttpError(
+          400,
+          'parent_group_id must match the selected group'
+        );
+      }
+
+      const parentGroup = await Groups.findById(
+        data.parent_group_id
+      );
+
+      if (!parentGroup) {
+        throw new HttpError(404, 'Parent group not found');
+      }
+
+      const target = await User.findById(data.target_user_id);
+
+      if (!target) {
+        throw new HttpError(404, 'Selected user not found');
+      }
+
+      if (
+        !(await UserGroup.hasGroupAccess(
+          data.target_user_id,
+          groupId
+        ))
+      ) {
+        throw new HttpError(
+          400,
+          'Selected user is not a member of the parent group'
+        );
+      }
+
+      const member = getMemberInformation(target);
+
+      // Keep group details and selected leader details together
+      // inside request_data so the admin can review them.
+      data.selected_member = member;
+      data.full_name = member.full_name;
+      data.email = member.email;
+      data.phone_number = member.phone_number;
+      data.current_role = member.current_role;
+
+      // Explicit leader fields are also saved for convenient display.
+      data.leader_full_name = member.full_name;
+      data.leader_email = member.email;
+      data.leader_phone_number = member.phone_number;
+      data.leader_current_role = member.current_role;
     }
 
     const request = await Requests.create({
@@ -251,8 +409,7 @@ exports.create = async (req, res) => {
   }
 };
 
-// List requests. Protect this endpoint with administrator
-// or view_requests permission middleware.
+// List requests.
 exports.findAll = async (req, res) => {
   try {
     const { status, request_type } = req.query;
@@ -353,7 +510,6 @@ exports.approve = async (req, res) => {
 
     await client.query('BEGIN');
 
-    // Lock the request to prevent concurrent approvals.
     const request = await Requests.findByIdForUpdate(id, client);
 
     if (!request) {
@@ -368,7 +524,6 @@ exports.approve = async (req, res) => {
       throw new HttpError(403, 'You cannot approve your own request');
     }
 
-    // Approve a new membership request.
     if (request.request_type === 'user') {
       const data = request.request_data;
 
@@ -400,20 +555,14 @@ exports.approve = async (req, res) => {
       );
 
       await UserGroup.add(user.id, request.group_id, client);
-    }
-
-    // Approve a leadership assignment.
-    else if (request.request_type === 'leader_assignment') {
+    } else if (request.request_type === 'leader_assignment') {
       const data = request.request_data;
       const targetId = getId(data?.target_user_id);
+      const requestedRole = validateRequestedRole(
+        data?.requested_role
+      );
 
-      const requestedRole =
-        typeof data?.requested_role === 'string'
-          ? data.requested_role.trim().toLowerCase()
-          : '';
-
-      // Validate the stored request again during approval.
-      if (!targetId || !requestedRole) {
+      if (!targetId) {
         throw new HttpError(
           400,
           'Invalid leadership assignment request data'
@@ -426,7 +575,6 @@ exports.approve = async (req, res) => {
         throw new HttpError(404, 'Selected user not found');
       }
 
-      // Ensure the target still belongs to the requested group.
       if (
         !(await UserGroup.hasGroupAccess(
           targetId,
@@ -440,7 +588,6 @@ exports.approve = async (req, res) => {
         );
       }
 
-      // Change users.role only after approval.
       const updatedUser = await User.updateRole(
         targetId,
         requestedRole,
@@ -450,10 +597,92 @@ exports.approve = async (req, res) => {
       if (!updatedUser) {
         throw new HttpError(404, 'Failed to update user role');
       }
-    }
+    } else if (request.request_type === 'group_creation') {
+      const data = request.request_data || {};
 
-    // Event approval is not implemented yet.
-    else if (request.request_type === 'event') {
+      const name =
+        typeof data.name === 'string' ? data.name.trim() : '';
+
+      const groupType =
+        typeof data.type === 'string'
+          ? data.type.trim().toLowerCase()
+          : '';
+
+      const parentGroupId = getId(data.parent_group_id);
+      const targetId = getId(data.target_user_id);
+      const requestedRole = validateRequestedRole(
+        data.requested_role
+      );
+
+      if (
+        !name ||
+        !GROUP_TYPES.includes(groupType) ||
+        !parentGroupId ||
+        !targetId
+      ) {
+        throw new HttpError(
+          400,
+          'Invalid group-creation request data'
+        );
+      }
+
+      const parentGroup = await Groups.findById(
+        parentGroupId,
+        client
+      );
+
+      if (!parentGroup) {
+        throw new HttpError(404, 'Parent group not found');
+      }
+
+      const target = await User.findById(targetId, client);
+
+      if (!target) {
+        throw new HttpError(404, 'Selected user not found');
+      }
+
+      if (
+        !(await UserGroup.hasGroupAccess(
+          targetId,
+          parentGroupId,
+          client
+        ))
+      ) {
+        throw new HttpError(
+          400,
+          'Selected user is no longer a member of the parent group'
+        );
+      }
+
+      const newGroup = await Groups.create(
+        {
+          name,
+          type: groupType,
+          parentGroupId,
+          location: data.location || null,
+          description: data.description || null,
+          leaderId: targetId,
+          createdBy: request.requested_by,
+        },
+        client
+      );
+
+      if (!newGroup?.id) {
+        throw new HttpError(500, 'Failed to create the new group');
+      }
+
+      const updatedUser = await User.updateRole(
+        targetId,
+        requestedRole,
+        client
+      );
+
+      if (!updatedUser) {
+        throw new HttpError(404, 'Failed to update user role');
+      }
+
+      await UserGroup.add(targetId, newGroup.id, client);
+    } else if (request.request_type === 'event') {
       throw new HttpError(
         501,
         'Event approval is not implemented yet'
@@ -462,7 +691,6 @@ exports.approve = async (req, res) => {
       throw new HttpError(400, 'Unsupported request type');
     }
 
-    // Update request status within the same transaction.
     const approved = await Requests.approve(
       id,
       {
@@ -527,6 +755,31 @@ exports.reject = async (req, res) => {
 
     return res.status(500).json({
       error: 'Failed to reject request',
+    });
+  }
+};
+
+// Delete a request permanently.
+exports.remove = async (req, res) => {
+  const id = getId(req.params.id);
+
+  if (!id) {
+    return res.status(400).json({ error: 'Invalid request ID' });
+  }
+
+  try {
+    const deleted = await Requests.delete(id);
+
+    if (!deleted) {
+      return res.status(404).json({ error: 'Request not found' });
+    }
+
+    return res.json(deleted);
+  } catch (err) {
+    console.error('Delete request error:', err);
+
+    return res.status(500).json({
+      error: 'Failed to delete request',
     });
   }
 };

@@ -1,26 +1,32 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE = (
+  import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+).replace(/\/$/, '');
 
 async function apiRequest(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
     ...options,
     headers: options.body
-      ? { 'Content-Type': 'application/json', ...(options.headers || {}) }
+      ? {
+          'Content-Type': 'application/json',
+          ...(options.headers || {}),
+        }
       : options.headers,
   });
 
   const data = await res.json().catch(() => null);
 
   if (!res.ok) {
-    throw new Error(data?.error || data?.message || 'Something went wrong');
+    throw new Error(
+      data?.error || data?.message || 'Something went wrong'
+    );
   }
 
   return data;
 }
 
-// Supports permissions returned either as strings or objects.
 const hasPermission = (permissions, permissionName) =>
   permissions.some((permission) =>
     typeof permission === 'string'
@@ -32,6 +38,7 @@ const TYPE_LABELS = {
   event: 'Event',
   user: 'New member',
   leader_assignment: 'Leader assignment',
+  group_creation: 'Group creation',
 };
 
 const STATUS_FILTERS = [
@@ -42,12 +49,24 @@ const STATUS_FILTERS = [
 ];
 
 const STATUS_STYLES = {
-  pending: { background: '#fef3c7', color: '#92400e', border: '#fde68a' },
-  approved: { background: '#dcfce7', color: '#166534', border: '#86efac' },
-  rejected: { background: '#fee2e2', color: '#991b1b', border: '#fca5a5' },
+  pending: {
+    background: '#fef3c7',
+    color: '#92400e',
+    border: '#fde68a',
+  },
+  approved: {
+    background: '#dcfce7',
+    color: '#166534',
+    border: '#86efac',
+  },
+  rejected: {
+    background: '#fee2e2',
+    color: '#991b1b',
+    border: '#fca5a5',
+  },
 };
 
-/* ---------- formatting ---------- */
+/* ---------- Formatting ---------- */
 
 const formatDateTime = (value) =>
   value
@@ -60,7 +79,6 @@ const formatDateTime = (value) =>
       })
     : '';
 
-// Formats the event's local date and time without timezone conversion.
 const formatEventTime = (value) => {
   const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(
     value || ''
@@ -68,11 +86,15 @@ const formatEventTime = (value) => {
 
   if (!match) return value || '';
 
-  const [, year, month, day, hour, minute] = match.map((part, index) =>
-    index === 0 ? part : Number(part)
-  );
+  const [, year, month, day, hour, minute] = match;
 
-  return new Date(year, month - 1, day, hour, minute).toLocaleString('en-GB', {
+  return new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute)
+  ).toLocaleString('en-GB', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
@@ -84,14 +106,68 @@ const formatEventTime = (value) => {
 const capitalize = (text) =>
   text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
 
-// Short summary shown on a tile.
+const getRequestData = (item) => {
+  const value = item?.request_data ?? item?.requestData ?? {};
+
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+
+  return value && typeof value === 'object' ? value : {};
+};
+
+const getSelectedMember = (data) => {
+  const member = data.selected_member || data.selectedMember || {};
+
+  return {
+    ...member,
+    full_name:
+      member.full_name ||
+      member.fullName ||
+      data.full_name ||
+      data.leader_full_name ||
+      '',
+    email:
+      member.email ||
+      data.email ||
+      data.leader_email ||
+      '',
+    phone_number:
+      member.phone_number ||
+      member.phoneNumber ||
+      data.phone_number ||
+      data.leader_phone_number ||
+      data.phone ||
+      '',
+    current_role:
+      member.current_role ||
+      member.currentRole ||
+      data.current_role ||
+      data.leader_current_role ||
+      '',
+    id:
+      member.id ||
+      data.target_user_id ||
+      data.selected_member_id ||
+      null,
+  };
+};
+
+/* ---------- Request summaries ---------- */
+
 const describe = (item) => {
-  const data = item.request_data || {};
+  const data = getRequestData(item);
 
   if (item.request_type === 'event') {
     return {
       title: data.title || 'Untitled event',
-      detail: data.start_datetime ? formatEventTime(data.start_datetime) : '',
+      detail: data.start_datetime
+        ? formatEventTime(data.start_datetime)
+        : '',
     };
   }
 
@@ -103,11 +179,22 @@ const describe = (item) => {
   }
 
   if (item.request_type === 'leader_assignment') {
+    const member = getSelectedMember(data);
+
     return {
-      title: `Member #${data.target_user_id}`,
+      title:
+        member.full_name ||
+        `Member #${data.target_user_id || 'unknown'}`,
       detail: data.requested_role
         ? `Promote to ${data.requested_role}`
         : '',
+    };
+  }
+
+  if (item.request_type === 'group_creation') {
+    return {
+      title: data.name || 'New group',
+      detail: [data.type, data.location].filter(Boolean).join(' · '),
     };
   }
 
@@ -117,9 +204,10 @@ const describe = (item) => {
   };
 };
 
-// Full details shown in the modal.
+/* ---------- Request details ---------- */
+
 const detailRows = (item) => {
-  const data = item.request_data || {};
+  const data = getRequestData(item);
 
   if (item.request_type === 'event') {
     return [
@@ -135,22 +223,60 @@ const detailRows = (item) => {
     return [
       ['Full name', data.full_name],
       ['Email', data.email],
-      ['Phone', data.phone],
+      ['Phone', data.phone || data.phone_number],
       ['Requested role', data.requested_role],
     ];
   }
 
   if (item.request_type === 'leader_assignment') {
+    const member = getSelectedMember(data);
+
     return [
-      ['Member ID', data.target_user_id],
-      ['Requested role', data.requested_role],
+      ['Member name', member.full_name || 'Not available'],
+      ['Member ID', member.id || 'Not available'],
+      ['Phone number', member.phone_number || 'Not available'],
+      ['Email', member.email || 'Not available'],
+      ['Current role', member.current_role || 'Not available'],
+      ['Requested role', data.requested_role || 'Not available'],
+    ];
+  }
+
+  if (item.request_type === 'group_creation') {
+    const parentGroup = data.parent_group_details || {};
+    const parentLeader = data.parent_leader_details || {};
+    const newLeader = getSelectedMember(data);
+
+    return [
+      ['Proposed group name', data.name],
+      ['Group type', data.type],
+      ['Location', data.location],
+      ['Description', data.description],
+
+      [
+        'Parent group',
+        parentGroup.name ||
+          data.parent_group_name ||
+          data.parent_group_id,
+      ],
+      ['Parent group type', parentGroup.type],
+
+      ['Parent leader name', parentLeader.full_name],
+      ['Parent leader phone', parentLeader.phone_number],
+      ['Parent leader email', parentLeader.email],
+
+      ['Proposed leader name', newLeader.full_name || 'Not available'],
+      ['Proposed leader ID', newLeader.id || 'Not available'],
+      ['Proposed leader phone', newLeader.phone_number || 'Not available'],
+      ['Proposed leader email', newLeader.email || 'Not available'],
+      ['Current role', newLeader.current_role || 'Not available'],
+      ['Requested role', data.requested_role || 'Not available'],
     ];
   }
 
   return [];
 };
 
-/* ---------- inline styles ---------- */
+/* ---------- Inline styles ---------- */
 
 const ui = {
   page: {
@@ -281,13 +407,22 @@ const button = (variant, disabled = false) => ({
   fontFamily: 'inherit',
   cursor: disabled ? 'not-allowed' : 'pointer',
   opacity: disabled ? 0.7 : 1,
-  ...(variant === 'approve' && { background: '#16a34a', color: '#fff' }),
-  ...(variant === 'reject' && { background: '#dc2626', color: '#fff' }),
+  ...(variant === 'approve' && {
+    background: '#16a34a',
+    color: '#fff',
+  }),
+  ...(variant === 'reject' && {
+    background: '#dc2626',
+    color: '#fff',
+  }),
   ...(variant === 'secondary' && {
     background: '#e2e8f0',
     color: '#0f172a',
   }),
-  ...(variant === 'dark' && { background: '#0f172a', color: '#fff' }),
+  ...(variant === 'dark' && {
+    background: '#0f172a',
+    color: '#fff',
+  }),
 });
 
 const tab = (active) => ({
@@ -313,7 +448,7 @@ const alertBox = (type) => ({
   }`,
 });
 
-/* ---------- small components ---------- */
+/* ---------- Small components ---------- */
 
 function StatusBadge({ status }) {
   const style = STATUS_STYLES[status] || {
@@ -342,7 +477,10 @@ function StatusBadge({ status }) {
 
 function DetailList({ rows }) {
   const visible = rows.filter(
-    ([, value]) => value !== null && value !== undefined && value !== ''
+    ([, value]) =>
+      value !== null &&
+      value !== undefined &&
+      value !== ''
   );
 
   if (visible.length === 0) {
@@ -373,19 +511,14 @@ function DetailList({ rows }) {
   );
 }
 
-// One clickable request in the grid.
-function RequestTile({ item, onOpen }) {
+/* ---------- Request card with Delete button ---------- */
+
+function RequestTile({ item, onOpen, onDelete, deleting }) {
   const [active, setActive] = useState(false);
   const { title, detail } = describe(item);
 
   return (
-    <button
-      type="button"
-      onClick={() => onOpen(item.id)}
-      onMouseEnter={() => setActive(true)}
-      onMouseLeave={() => setActive(false)}
-      onFocus={() => setActive(true)}
-      onBlur={() => setActive(false)}
+    <div
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -393,10 +526,6 @@ function RequestTile({ item, onOpen }) {
         width: '100%',
         boxSizing: 'border-box',
         padding: 16,
-        textAlign: 'left',
-        font: 'inherit',
-        color: '#0f172a',
-        cursor: 'pointer',
         background: active ? '#ffffff' : '#f8fafc',
         border: `1px solid ${active ? '#2563eb' : '#e2e8f0'}`,
         borderRadius: 12,
@@ -404,39 +533,87 @@ function RequestTile({ item, onOpen }) {
           ? '0 8px 20px rgba(37, 99, 235, 0.12)'
           : 'none',
       }}
+      onMouseEnter={() => setActive(true)}
+      onMouseLeave={() => setActive(false)}
     >
-      <div style={{ ...ui.row, justifyContent: 'space-between' }}>
-        <span style={ui.typeChip}>
-          {TYPE_LABELS[item.request_type] || item.request_type}
+      <button
+        type="button"
+        onClick={() => onOpen(item.id)}
+        onFocus={() => setActive(true)}
+        onBlur={() => setActive(false)}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'stretch',
+          gap: 10,
+          width: '100%',
+          padding: 0,
+          textAlign: 'left',
+          font: 'inherit',
+          color: '#0f172a',
+          cursor: 'pointer',
+          background: 'transparent',
+          border: 'none',
+        }}
+      >
+        <div style={{ ...ui.row, justifyContent: 'space-between' }}>
+          <span style={ui.typeChip}>
+            {TYPE_LABELS[item.request_type] || item.request_type}
+          </span>
+          <StatusBadge status={item.status} />
+        </div>
+
+        <strong style={{ fontSize: '1rem', overflowWrap: 'anywhere' }}>
+          {title}
+        </strong>
+
+        {detail && (
+          <span
+            style={{
+              color: '#475569',
+              fontSize: '0.88rem',
+              overflowWrap: 'anywhere',
+            }}
+          >
+            {detail}
+          </span>
+        )}
+
+        <span style={{ color: '#64748b', fontSize: '0.8rem' }}>
+          {item.requested_by_name
+            ? `by ${item.requested_by_name} · `
+            : ''}
+          {formatDateTime(item.created_at)}
         </span>
-        <StatusBadge status={item.status} />
-      </div>
+      </button>
 
-      <strong style={{ fontSize: '1rem', overflowWrap: 'anywhere' }}>
-        {title}
-      </strong>
-
-      {detail && (
-        <span
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          borderTop: '1px solid #e2e8f0',
+          paddingTop: 10,
+        }}
+      >
+        <button
+          type="button"
+          disabled={deleting}
+          onClick={() => onDelete(item)}
           style={{
-            color: '#475569',
-            fontSize: '0.88rem',
-            overflowWrap: 'anywhere',
+            ...button('reject', deleting),
+            padding: '7px 12px',
+            fontSize: '0.85rem',
           }}
         >
-          {detail}
-        </span>
-      )}
-
-      <span style={{ color: '#64748b', fontSize: '0.8rem' }}>
-        {item.requested_by_name ? `by ${item.requested_by_name} · ` : ''}
-        {formatDateTime(item.created_at)}
-      </span>
-    </button>
+          {deleting ? 'Deleting...' : 'Delete'}
+        </button>
+      </div>
+    </div>
   );
 }
 
-// The details window for one request.
+/* ---------- Request details modal ---------- */
+
 function RequestModal({
   item,
   onClose,
@@ -465,15 +642,18 @@ function RequestModal({
     setMessage('');
 
     try {
-      const updated = await apiRequest(`/requests/${item.id}/${action}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          review_note: note.trim() || undefined,
-        }),
-      });
+      const updated = await apiRequest(
+        `/requests/${item.id}/${action}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            review_note: note.trim() || undefined,
+          }),
+        }
+      );
 
       onReviewed(updated);
-      setMessage(`Request ${updated.status}.`);
+      setMessage(`Request ${updated.status || action} successfully.`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -629,23 +809,19 @@ function RequestModal({
   );
 }
 
-/* ---------- page ---------- */
+/* ---------- Page ---------- */
 
 export default function AdministrationRequestsPage() {
   const [items, setItems] = useState([]);
-
   const [requestsLoading, setRequestsLoading] = useState(true);
   const [permissionsLoading, setPermissionsLoading] = useState(true);
-
   const [error, setError] = useState('');
   const [permissionsError, setPermissionsError] = useState('');
-
   const [permissions, setPermissions] = useState([]);
-
   const [statusFilter, setStatusFilter] = useState('all');
   const [selectedId, setSelectedId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
 
-  // Fetch the logged-in administrator's assigned permissions.
   const fetchPermissions = useCallback(async (signal) => {
     setPermissionsLoading(true);
     setPermissionsError('');
@@ -673,7 +849,6 @@ export default function AdministrationRequestsPage() {
     }
   }, []);
 
-  // Fetch requests.
   const fetchRequests = useCallback(async (signal) => {
     setRequestsLoading(true);
     setError('');
@@ -701,7 +876,6 @@ export default function AdministrationRequestsPage() {
     return () => controller.abort();
   }, [fetchPermissions, fetchRequests]);
 
-  // Check the permissions assigned to the currently logged-in administrator.
   const canApprove = hasPermission(permissions, 'approve_requests');
   const canReject = hasPermission(permissions, 'reject_requests');
 
@@ -715,7 +889,6 @@ export default function AdministrationRequestsPage() {
     [items]
   );
 
-  // Requests grouped by group, with groups in alphabetical order.
   const groups = useMemo(() => {
     const visible =
       statusFilter === 'all'
@@ -725,15 +898,17 @@ export default function AdministrationRequestsPage() {
     const byGroup = new Map();
 
     visible.forEach((item) => {
-      if (!byGroup.has(item.group_id)) {
-        byGroup.set(item.group_id, {
-          id: item.group_id,
-          name: item.group_name || `Group #${item.group_id}`,
+      const groupKey = item.group_id ?? 'no-group';
+
+      if (!byGroup.has(groupKey)) {
+        byGroup.set(groupKey, {
+          id: groupKey,
+          name: item.group_name || `Group #${item.group_id ?? 'unknown'}`,
           requests: [],
         });
       }
 
-      byGroup.get(item.group_id).requests.push(item);
+      byGroup.get(groupKey).requests.push(item);
     });
 
     return [...byGroup.values()].sort((a, b) =>
@@ -741,12 +916,14 @@ export default function AdministrationRequestsPage() {
     );
   }, [items, statusFilter]);
 
-  const selected = items.find((item) => item.id === selectedId) || null;
+  const selected =
+    items.find((item) => item.id === selectedId) || null;
 
   const closeModal = useCallback(() => setSelectedId(null), []);
 
-  // Merge the updated request into the existing row.
   const handleReviewed = (updated) => {
+    if (!updated || updated.id == null) return;
+
     setItems((current) =>
       current.map((item) =>
         item.id === updated.id ? { ...item, ...updated } : item
@@ -754,15 +931,45 @@ export default function AdministrationRequestsPage() {
     );
   };
 
-  // Wait until both requests and permissions have loaded before displaying
-  // the request records.
+  /* Delete a request from the backend, then remove it from the page. */
+  const handleDelete = async (item) => {
+    const requestType =
+      TYPE_LABELS[item.request_type] || item.request_type || 'request';
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete this ${requestType.toLowerCase()}? This action cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    setDeletingId(item.id);
+    setError('');
+
+    try {
+      await apiRequest(`/requests/${item.id}`, {
+        method: 'DELETE',
+      });
+
+      setItems((current) =>
+        current.filter((request) => request.id !== item.id)
+      );
+
+      if (selectedId === item.id) {
+        setSelectedId(null);
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to delete the request.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const loading = requestsLoading || permissionsLoading;
 
   return (
     <div style={ui.page}>
       <header>
         <h1 style={ui.title}>Requests</h1>
-
         <p style={ui.subtitle}>
           Requests from group leaders, organised by group. Select a request
           to see its details.
@@ -846,6 +1053,8 @@ export default function AdministrationRequestsPage() {
                     key={item.id}
                     item={item}
                     onOpen={setSelectedId}
+                    onDelete={handleDelete}
+                    deleting={deletingId === item.id}
                   />
                 ))}
               </div>

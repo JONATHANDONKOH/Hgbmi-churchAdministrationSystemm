@@ -1,4 +1,3 @@
-// Replace these sample values with data from your API
 import '../../styles/cellDashboard.css';
 
 const stats = [
@@ -7,7 +6,7 @@ const stats = [
   { label: 'Upcoming Meeting', value: 'Wed, 6:00 PM' },
 ];
 
-export default function CellDashboard() {
+export default function CellDashboard({ groupId }) {
   return (
     <div>
       <h1 className="dash-title">Dashboard</h1>
