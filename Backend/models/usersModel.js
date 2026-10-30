@@ -108,19 +108,47 @@ const User = {
     return bcrypt.compare(candidate, hash);
   },
 
+  // Gets all administrators with their request-review statistics.
   async findAllAdmins(db = pool) {
     const { rows } = await db.query(
       `SELECT
-         id,
-         full_name,
-         email,
-         role,
-         phone_number,
-         created_at
-       FROM users
-       WHERE role = $1
-       ORDER BY created_at DESC`,
-      ['admin']
+         u.id,
+         u.full_name,
+         u.email,
+         u.role,
+         u.phone_number,
+         u.created_at,
+
+         COUNT(r.id) FILTER (
+           WHERE r.status IN ('approved', 'rejected')
+         )::INTEGER AS total_reviewed,
+
+         COUNT(r.id) FILTER (
+           WHERE r.status = 'approved'
+         )::INTEGER AS approved_requests,
+
+         COUNT(r.id) FILTER (
+           WHERE r.status = 'rejected'
+         )::INTEGER AS rejected_requests,
+
+         MAX(r.reviewed_at) AS last_reviewed_at
+
+       FROM users u
+
+       LEFT JOIN requests r
+         ON r.reviewed_by = u.id
+
+       WHERE u.role = 'admin'
+
+       GROUP BY
+         u.id,
+         u.full_name,
+         u.email,
+         u.role,
+         u.phone_number,
+         u.created_at
+
+       ORDER BY u.created_at DESC`
     );
 
     return rows;

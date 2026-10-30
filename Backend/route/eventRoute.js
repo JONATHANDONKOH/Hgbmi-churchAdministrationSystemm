@@ -3,66 +3,65 @@ const router = express.Router();
 
 const EventController = require('../Controller/eventController');
 const { protect } = require('../middleware/authMiddleware');
-const { requirePermission } = require('../middleware/permissionMiddleware');
-const { restrictTo } = require('../middleware/roleMiddleware');
 
-// Protect all event routes
+// All event routes require authentication
 router.use(protect);
 
-// Super Admin endpoints — role-based access
+// ==========================================
+// SUPERADMIN EVENT ROUTES
+// ==========================================
+
 router.get(
   '/super-admin',
-  restrictTo('super_admin'),
-  EventController.findAll
+  EventController.findAllSuperAdmin
 );
 
 router.get(
   '/super-admin/:id',
-  restrictTo('super_admin'),
-  EventController.findById
+  EventController.findByIdSuperAdmin
 );
 
-router.put(
-  '/super-admin/:id',
-  restrictTo('super_admin'),
-  EventController.update
-);
+// ==========================================
+// ADMIN EVENT ROUTES
+// ==========================================
 
-router.delete(
-  '/super-admin/:id',
-  restrictTo('super_admin'),
-  EventController.delete
-);
-
-// Regular user endpoints — permission-based access
-router.post(
-  '/',
-  requirePermission('create_event'),
-  EventController.create
+router.get(
+  '/admin',
+  EventController.findAllAdmin
 );
 
 router.get(
-  '/',
-  requirePermission('view_events'),
-  EventController.findAll
+  '/admin/:id',
+  EventController.findByIdAdmin
+);
+
+// ==========================================
+// GROUP EVENT ROUTES
+// ==========================================
+
+router.get(
+  '/group/:groupId',
+  EventController.findAllGroup
 );
 
 router.get(
-  '/:id',
-  requirePermission('view_events'),
-  EventController.findById
+  '/group/:groupId/:id',
+  EventController.findByIdGroup
 );
 
-router.put(
-  '/:id',
-  requirePermission('edit_event'),
-  EventController.update
-);
+// ==========================================
+// GENERAL EVENT ROUTES
+// Retained for existing frontend connections
+// ==========================================
 
-router.delete(
-  '/:id',
-  requirePermission('delete_event'),
-  EventController.delete
-);
+router.get('/', EventController.findAll);
+
+router.get('/:id', EventController.findById);
+
+router.post('/', EventController.create);
+
+router.put('/:id', EventController.update);
+
+router.delete('/:id', EventController.delete);
 
 module.exports = router;

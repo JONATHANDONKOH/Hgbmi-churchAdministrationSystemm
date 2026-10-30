@@ -63,7 +63,7 @@ export default function SuperAdminDepartment() {
     <div className="administration-section-page">
       <header className="administration-page-header">
         <div>
-          <p className="administration-eyebrow">Super admin</p>
+          <p className="administration-eyebrow">Superadmin</p>
           <h1 className="administration-title">Departments</h1>
         </div>
 

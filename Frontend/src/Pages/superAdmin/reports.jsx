@@ -2,13 +2,35 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import '../../styles/administrationManagement.css';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE = (
+  import.meta.env.VITE_API_URL || 'http://localhost:5000'
+).replace(/\/$/, '');
 
 const reportCategories = [
-  { title: 'Fellowship report', type: 'fellowship', label: 'Fellowship' },
-  { title: 'Cells report', type: 'cell', label: 'Cell' },
-  { title: 'Ministries report', type: 'ministry', label: 'Ministry' },
-  { title: 'Departmental report', type: 'department', label: 'Department' },
+  {
+    title: 'Fellowship Reports',
+    type: 'fellowship',
+    label: 'Fellowship',
+    description: 'View fellowships and access their reports.',
+  },
+  {
+    title: 'Cell Reports',
+    type: 'cell',
+    label: 'Cell',
+    description: 'View cells and access their reports.',
+  },
+  {
+    title: 'Ministry Reports',
+    type: 'ministry',
+    label: 'Ministry',
+    description: 'View ministries and access their reports.',
+  },
+  {
+    title: 'Department Reports',
+    type: 'department',
+    label: 'Department',
+    description: 'View departments and access their reports.',
+  },
 ];
 
 const headCellStyle = {
@@ -28,228 +50,449 @@ const bodyCellStyle = {
   lineHeight: 1.5,
 };
 
+function getGroups(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.groups)) return data.groups;
+  if (Array.isArray(data?.data)) return data.data;
+  return [];
+}
+
+function getEvents(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.events)) return data.events;
+  if (Array.isArray(data?.data)) return data.data;
+  return [];
+}
+
+function getEventGroupId(event) {
+  return event?.group_id ?? event?.groupId ?? event?.group?.id ?? null;
+}
+
 export default function SuperAdminReports() {
-  const rows = [reportCategories.slice(0, 2), reportCategories.slice(2, 4)];
   const navigate = useNavigate();
 
   const [selectedType, setSelectedType] = useState(null);
   const [groups, setGroups] = useState([]);
+  const [eventCounts, setEventCounts] = useState({});
+  const [eventsError, setEventsError] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const selectedCategory = reportCategories.find(
     (category) => category.type === selectedType
   );
 
   const visibleGroups = groups.filter(
-    (group) => String(group.type || '').toLowerCase() === String(selectedType || '')
+    (group) =>
+      String(group.type || '').toLowerCase() === selectedType
   );
+
+  const filteredGroups = visibleGroups.filter((group) => {
+    const query = searchTerm.trim().toLowerCase();
+
+    return (
+      !query ||
+      `${group.name || ''} ${group.location || ''} ${group.description || ''}`
+        .toLowerCase()
+        .includes(query)
+    );
+  });
 
   useEffect(() => {
     if (!selectedType) return;
 
     const controller = new AbortController();
 
-    setLoading(true);
-    setError('');
-    setGroups([]);
+    async function loadGroups() {
+      setLoading(true);
+      setError('');
+      setEventsError('');
+      setGroups([]);
+      setEventCounts({});
 
-    const loadGroups = async () => {
+      // Groups and super-admin events are requested together.
+      // A failed events request does not hide the groups.
+      const groupsRequest = fetch(`${API_BASE}/api/groups`, {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+
+      const eventsRequest = fetch(`${API_BASE}/api/events/super-admin`, {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+
       try {
-        const res = await fetch(`${API_URL}/groups`, {
-          credentials: 'include',
-          signal: controller.signal,
-        });
+        const [groupsResult, eventsResult] = await Promise.allSettled([
+          groupsRequest,
+          eventsRequest,
+        ]);
 
-        const data = await res.json().catch(() => null);
+        if (controller.signal.aborted) return;
 
-        if (!res.ok) {
-          throw new Error(data?.error || data?.message || 'Failed to load groups');
+        // Groups are required.
+        if (groupsResult.status === 'rejected') {
+          throw groupsResult.reason;
         }
 
-        setGroups(Array.isArray(data) ? data : []);
+        const groupsResponse = groupsResult.value;
+        const groupsData = await groupsResponse.json().catch(() => ({}));
+
+        if (!groupsResponse.ok) {
+          throw new Error(
+            groupsData.message || groupsData.error || 'Failed to load groups.'
+          );
+        }
+
+        setGroups(getGroups(groupsData));
+
+        // Events are optional.
+        if (eventsResult.status === 'fulfilled') {
+          const eventsResponse = eventsResult.value;
+          const eventsData = await eventsResponse.json().catch(() => ({}));
+
+          if (eventsResponse.ok) {
+            const counts = {};
+
+            getEvents(eventsData).forEach((event) => {
+              const groupId = getEventGroupId(event);
+
+              if (groupId == null) return;
+
+              const key = String(groupId);
+              counts[key] = (counts[key] || 0) + 1;
+            });
+
+            if (!controller.signal.aborted) setEventCounts(counts);
+          } else if (!controller.signal.aborted) {
+            setEventsError(
+              eventsData.message ||
+                eventsData.error ||
+                'Event counts could not be loaded.'
+            );
+          }
+        } else if (
+          eventsResult.reason?.name !== 'AbortError' &&
+          !controller.signal.aborted
+        ) {
+          setEventsError('Event counts could not be loaded.');
+        }
       } catch (err) {
-        if (err.name !== 'AbortError') setError(err.message);
+        if (
+          err.name !== 'AbortError' &&
+          !controller.signal.aborted
+        ) {
+          setError(err.message || 'Failed to load groups.');
+        }
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       }
-    };
+    }
 
     loadGroups();
 
     return () => controller.abort();
-  }, [selectedType]);
+  }, [selectedType, refreshKey]);
+
+  function openCategory(type) {
+    setSearchTerm('');
+    setSelectedType(type);
+  }
+
+  function closeModal() {
+    setSelectedType(null);
+    setGroups([]);
+    setEventCounts({});
+    setEventsError('');
+    setError('');
+    setSearchTerm('');
+  }
+
+  function openGroupReport(group) {
+    if (group.id == null) {
+      setError('This group does not have a valid ID.');
+      return;
+    }
+
+    navigate(
+      `/super-admin/reports/group/${encodeURIComponent(group.id)}`,
+      { state: { group } }
+    );
+  }
 
   return (
     <div className="administration-section-page">
       <header className="administration-page-header">
         <div>
-          <p className="administration-eyebrow">Super admin</p>
+          <p className="administration-eyebrow">Superadmin</p>
           <h1 className="administration-title">Reports</h1>
+          <p style={{ color: '#64748b', marginTop: '8px' }}>
+            Select a group category, then open a group's report.
+          </p>
         </div>
       </header>
 
-      <section aria-label="Super admin reports overview" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        {rows.map((row, rowIndex) => (
-          <div key={rowIndex} style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-            {row.map((category) => {
-              const isSelected = selectedType === category.type;
-
-              return (
-                <article
-                  key={category.type}
-                  className="administration-card"
-                  role="button"
-                  tabIndex={0}
-                  aria-pressed={isSelected}
-                  onClick={() => setSelectedType(category.type)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setSelectedType(category.type);
-                    }
-                  }}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    minHeight: '180px',
-                    flex: '1 1 320px',
-                    maxWidth: 'calc(50% - 10px)',
-                    padding: 0,
-                    overflow: 'hidden',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <div
-                    style={{
-                      flex: 1,
-                      border: `1px solid ${isSelected ? '#60a5fa' : '#1f2937'}`,
-                      borderRadius: '12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: '#ffffff',
-                      fontSize: '0.9rem',
-                      background: '#111827',
-                      minHeight: '180px',
-                    }}
-                  >
-                    {category.title}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        ))}
-
-        {selectedCategory && (
-          <div
+      <section
+        aria-label="Report categories"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+          gap: '20px',
+        }}
+      >
+        {reportCategories.map((category) => (
+          <button
+            key={category.type}
+            type="button"
+            onClick={() => openCategory(category.type)}
+            className="administration-card"
             style={{
-              position: 'fixed',
-              inset: 0,
-              background: 'rgba(15, 23, 42, 0.7)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+              minHeight: '190px',
               padding: '24px',
-              zIndex: 50,
+              textAlign: 'left',
+              cursor: 'pointer',
+              background: '#111827',
+              color: '#ffffff',
+              border: '1px solid #374151',
+              borderRadius: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+              gap: '14px',
             }}
-            onClick={() => setSelectedType(null)}
+          >
+            <div>
+              <p
+                style={{
+                  margin: '0 0 12px',
+                  fontSize: '0.75rem',
+                  color: '#93c5fd',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                }}
+              >
+                Group category
+              </p>
+
+              <h2 style={{ margin: 0, fontSize: '1.2rem' }}>
+                {category.title}
+              </h2>
+
+              <p
+                style={{
+                  margin: '10px 0 0',
+                  color: '#d1d5db',
+                  fontSize: '0.9rem',
+                  lineHeight: 1.5,
+                }}
+              >
+                {category.description}
+              </p>
+            </div>
+
+            <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>
+              View groups →
+            </span>
+          </button>
+        ))}
+      </section>
+
+      {selectedCategory && (
+        <div
+          role="presentation"
+          onClick={closeModal}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+            zIndex: 50,
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="report-group-dialog-title"
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: 'min(1100px, 100%)',
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              background: '#ffffff',
+              borderRadius: '16px',
+              padding: '24px',
+              color: '#111827',
+            }}
           >
             <div
               style={{
-                width: 'min(1100px, 100%)',
-                maxHeight: '80vh',
-                overflowY: 'auto',
-                background: '#ffffff',
-                borderRadius: '18px',
-                boxShadow: '0 24px 60px rgba(15, 23, 42, 0.35)',
-                padding: '24px',
-                color: '#111827',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '12px',
+                marginBottom: '18px',
               }}
-              onClick={(e) => e.stopPropagation()}
-              aria-live="polite"
             >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '12px',
-                  marginBottom: '20px',
-                }}
-              >
-                <h2 style={{ margin: 0 }}>{selectedCategory.title}</h2>
-                <button
-                  type="button"
-                  onClick={() => setSelectedType(null)}
-                  style={{
-                    border: 'none',
-                    borderRadius: '8px',
-                    padding: '8px 12px',
-                    background: '#111827',
-                    color: '#ffffff',
-                    cursor: 'pointer',
-                  }}
+              <div>
+                <h2
+                  id="report-group-dialog-title"
+                  style={{ margin: 0 }}
                 >
-                  Close
-                </button>
+                  {selectedCategory.title}
+                </h2>
+
+                <p style={{ color: '#64748b' }}>
+                  Select a group to view its report.
+                </p>
               </div>
 
-              {loading && <p>Loading groups...</p>}
-
-              {!loading && error && <p>{error}</p>}
-
-              {!loading && !error && visibleGroups.length === 0 && (
-                <p>No groups found for this category.</p>
-              )}
-
-              {!loading && !error && visibleGroups.length > 0 && (
-                <div style={{ overflowX: 'auto' }}>
-                  <table
-                    style={{
-                      width: '100%',
-                      borderCollapse: 'collapse',
-                      textAlign: 'left',
-                    }}
-                  >
-                    <thead>
-                      <tr>
-                        <th style={headCellStyle}>{selectedCategory.label}</th>
-                        <th style={headCellStyle}>Location</th>
-                        <th style={headCellStyle}>Description</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visibleGroups.map((group) => (
-                        <tr
-                          key={group.id}
-                          onClick={() => navigate('/super-admin/dashboard', { state: { group } })}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              navigate('/super-admin/dashboard', { state: { group } });
-                            }
-                          }}
-                          tabIndex={0}
-                          style={{ cursor: 'pointer' }}
-                        >
-                          <td style={bodyCellStyle}>
-                            <strong style={{ color: '#111827' }}>{group.name}</strong>
-                          </td>
-                          <td style={bodyCellStyle}>{group.location || '—'}</td>
-                          <td style={bodyCellStyle}>{group.description || '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              <button type="button" onClick={closeModal}>
+                Close
+              </button>
             </div>
-          </div>
-        )}
-      </section>
+
+            {!loading && !error && eventsError && (
+              <p
+                role="status"
+                style={{
+                  margin: '0 0 16px',
+                  padding: '10px 14px',
+                  background: '#fffaeb',
+                  border: '1px solid #fedf89',
+                  borderRadius: '8px',
+                  color: '#93370d',
+                  fontSize: '0.9rem',
+                }}
+              >
+                {eventsError}
+              </p>
+            )}
+
+            {!loading && !error && visibleGroups.length > 0 && (
+              <input
+                type="search"
+                placeholder="Search by group name or location..."
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  padding: '12px 14px',
+                  marginBottom: '18px',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '8px',
+                }}
+              />
+            )}
+
+            {loading && <p>Loading groups...</p>}
+
+            {!loading && error && (
+              <div>
+                <p style={{ color: '#dc2626' }}>{error}</p>
+                <button
+                  type="button"
+                  onClick={() => setRefreshKey((value) => value + 1)}
+                >
+                  Try again
+                </button>
+              </div>
+            )}
+
+            {!loading && !error && visibleGroups.length === 0 && (
+              <p style={{ color: '#64748b' }}>
+                No {selectedCategory.label.toLowerCase()} groups found.
+              </p>
+            )}
+
+            {!loading &&
+              !error &&
+              visibleGroups.length > 0 &&
+              filteredGroups.length === 0 && (
+                <p style={{ color: '#64748b' }}>
+                  No groups match your search.
+                </p>
+              )}
+
+            {!loading && !error && filteredGroups.length > 0 && (
+              <div style={{ overflowX: 'auto' }}>
+                <table
+                  style={{
+                    width: '100%',
+                    borderCollapse: 'collapse',
+                    textAlign: 'left',
+                  }}
+                >
+                  <thead>
+                    <tr>
+                      <th style={headCellStyle}>
+                        {selectedCategory.label}
+                      </th>
+                      <th style={headCellStyle}>Location</th>
+                      <th style={headCellStyle}>Description</th>
+                      <th style={headCellStyle}>Events</th>
+                      <th style={headCellStyle}>Action</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {filteredGroups.map((group) => (
+                      <tr key={group.id}>
+                        <td style={bodyCellStyle}>
+                          <strong>
+                            {group.name || 'Unnamed group'}
+                          </strong>
+                        </td>
+
+                        <td style={bodyCellStyle}>
+                          {group.location || '—'}
+                        </td>
+
+                        <td style={bodyCellStyle}>
+                          {group.description || '—'}
+                        </td>
+
+                        <td style={bodyCellStyle}>
+                          {eventsError
+                            ? '—'
+                            : eventCounts[String(group.id)] || 0}
+                        </td>
+
+                        <td style={bodyCellStyle}>
+                          <button
+                            type="button"
+                            onClick={() => openGroupReport(group)}
+                            style={{
+                              padding: '8px 12px',
+                              border: 'none',
+                              borderRadius: '7px',
+                              background: '#111827',
+                              color: '#ffffff',
+                              cursor: 'pointer',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            View report
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }

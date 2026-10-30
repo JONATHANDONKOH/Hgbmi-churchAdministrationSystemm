@@ -1,4 +1,3 @@
-
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 const API_BASE = (
@@ -213,6 +212,14 @@ function normalizeRole(role) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, '_');
+}
+
+// Plain members (role is "member" or empty) are hidden.
+// Any other role (leader, secretary, treasurer, etc.) is shown.
+function hasNonMemberRole(role) {
+  const normalized = normalizeRole(role);
+
+  return normalized !== '' && normalized !== 'member';
 }
 
 function getArrayFromResponse(data, keys = []) {
@@ -657,6 +664,11 @@ export default function FellowshipLeadersPage() {
     return members.filter((member) => {
       const memberId = getMemberId(member);
 
+      // Hide plain members. Show any other role.
+      if (!hasNonMemberRole(member.role)) {
+        return false;
+      }
+
       // Exclude the currently logged-in account.
       if (
         currentUserId !== null &&
@@ -918,13 +930,13 @@ export default function FellowshipLeadersPage() {
         >
           <h2 style={{ margin: 0, fontSize: '18px' }}>
             {selectedGroupName
-              ? `${selectedGroupName} members`
-              : 'Fellowship members'}
+              ? `${selectedGroupName} leaders`
+              : 'Fellowship leaders'}
           </h2>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <span style={styles.muted}>
-              {filteredMembers.length} member
+              {filteredMembers.length} leader
               {filteredMembers.length === 1 ? '' : 's'}
             </span>
 
@@ -944,9 +956,9 @@ export default function FellowshipLeadersPage() {
         </div>
 
         {loadingMembers ? (
-          <p style={styles.muted}>Loading members...</p>
+          <p style={styles.muted}>Loading leaders...</p>
         ) : filteredMembers.length === 0 ? (
-          <p style={styles.muted}>No members found in this fellowship.</p>
+          <p style={styles.muted}>No leaders found in this fellowship.</p>
         ) : (
           <div style={styles.tableWrap}>
             <table style={styles.table}>

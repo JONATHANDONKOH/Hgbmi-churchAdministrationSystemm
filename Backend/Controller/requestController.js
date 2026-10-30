@@ -1,3 +1,4 @@
+
 const pool = require('../Config/db');
 const bcrypt = require('bcryptjs');
 const Groups = require('../models/groupsModel');
@@ -10,6 +11,7 @@ const REQUEST_TYPES = [
   'leader_assignment',
   'group_creation',
   'event',
+  'meeting',
 ];
 
 const GROUP_TYPES = [
@@ -28,7 +30,6 @@ class HttpError extends Error {
 
 const getId = (value) => {
   const id = Number(value);
-
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 };
 
@@ -51,36 +52,25 @@ const validateRequestedRole = (role) => {
   return role.trim().toLowerCase();
 };
 
-// Read user information regardless of whether the model returns
-// snake_case database fields or camelCase JavaScript fields.
 const getMemberInformation = (user) => {
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
   return {
     id: getId(user.id),
-    full_name:
-      user.full_name ||
-      user.fullName ||
-      user.name ||
-      '',
+    full_name: user.full_name || user.fullName || user.name || '',
     email: user.email || '',
     phone_number:
-      user.phone_number ||
-      user.phoneNumber ||
-      user.phone ||
-      '',
+      user.phone_number || user.phoneNumber || user.phone || '',
     current_role: user.role || 'member',
   };
 };
 
-// Validate request data before saving it.
 const validateRequestData = (type, data) => {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new HttpError(400, 'request_data must be an object');
   }
 
+  // MEMBER REQUEST
   if (type === 'user') {
     const { full_name, email, phone, password } = data;
 
@@ -123,6 +113,7 @@ const validateRequestData = (type, data) => {
     };
   }
 
+  // LEADER ASSIGNMENT REQUEST
   if (type === 'leader_assignment') {
     const targetId = getId(data.target_user_id);
     const requestedRole = validateRequestedRole(data.requested_role);
@@ -139,9 +130,9 @@ const validateRequestData = (type, data) => {
     };
   }
 
+  // GROUP CREATION REQUEST
   if (type === 'group_creation') {
-    const name =
-      typeof data.name === 'string' ? data.name.trim() : '';
+    const name = typeof data.name === 'string' ? data.name.trim() : '';
 
     const groupType =
       typeof data.type === 'string'
@@ -192,6 +183,7 @@ const validateRequestData = (type, data) => {
     };
   }
 
+  // EVENT REQUEST
   if (type === 'event') {
     if (
       typeof data.title !== 'string' ||
@@ -233,10 +225,55 @@ const validateRequestData = (type, data) => {
     };
   }
 
+  // MEETING REQUEST
+  if (type === 'meeting') {
+    if (
+      typeof data.title !== 'string' ||
+      !data.title.trim() ||
+      typeof data.description !== 'string' ||
+      !data.description.trim() ||
+      !data.start_date ||
+      !data.end_date
+    ) {
+      throw new HttpError(
+        400,
+        'title, description, start_date and end_date are required'
+      );
+    }
+
+    const start = new Date(data.start_date);
+    const end = new Date(data.end_date);
+
+    if (
+      Number.isNaN(start.getTime()) ||
+      Number.isNaN(end.getTime()) ||
+      end <= start
+    ) {
+      throw new HttpError(
+        400,
+        'Invalid meeting date or time range'
+      );
+    }
+
+    if (data.location != null && typeof data.location !== 'string') {
+      throw new HttpError(400, 'Meeting location must be a string');
+    }
+
+    return {
+      data: {
+        title: data.title.trim(),
+        description: data.description.trim(),
+        start_date: start.toISOString(),
+        end_date: end.toISOString(),
+        location: data.location?.trim() || null,
+      },
+    };
+  }
+
   throw new HttpError(400, 'Unsupported request type');
 };
 
-// Submit a member, role assignment, group creation, or event request.
+// SUBMIT A REQUEST
 exports.create = async (req, res) => {
   try {
     const body = req.body || {};
@@ -289,12 +326,9 @@ exports.create = async (req, res) => {
       }
     }
 
-    const validated = validateRequestData(
-      type,
-      body.request_data
-    );
-
+    const validated = validateRequestData(type, body.request_data);
     const { data } = validated;
+
     let passwordHash = null;
 
     if (type === 'user') {
@@ -307,7 +341,6 @@ exports.create = async (req, res) => {
       passwordHash = await bcrypt.hash(validated.password, 10);
     }
 
-    // Existing member role-assignment request.
     if (type === 'leader_assignment') {
       const target = await User.findById(data.target_user_id);
 
@@ -316,10 +349,7 @@ exports.create = async (req, res) => {
       }
 
       if (
-        !(await UserGroup.hasGroupAccess(
-          data.target_user_id,
-          groupId
-        ))
+        !(await UserGroup.hasGroupAccess(data.target_user_id, groupId))
       ) {
         throw new HttpError(
           400,
@@ -329,7 +359,6 @@ exports.create = async (req, res) => {
 
       const member = getMemberInformation(target);
 
-      // Save actual member information from the database.
       data.selected_member = member;
       data.full_name = member.full_name;
       data.email = member.email;
@@ -337,7 +366,6 @@ exports.create = async (req, res) => {
       data.current_role = member.current_role;
     }
 
-    // Request to create a new group and appoint its leader.
     if (type === 'group_creation') {
       if (data.parent_group_id !== groupId) {
         throw new HttpError(
@@ -346,9 +374,7 @@ exports.create = async (req, res) => {
         );
       }
 
-      const parentGroup = await Groups.findById(
-        data.parent_group_id
-      );
+      const parentGroup = await Groups.findById(data.parent_group_id);
 
       if (!parentGroup) {
         throw new HttpError(404, 'Parent group not found');
@@ -361,10 +387,7 @@ exports.create = async (req, res) => {
       }
 
       if (
-        !(await UserGroup.hasGroupAccess(
-          data.target_user_id,
-          groupId
-        ))
+        !(await UserGroup.hasGroupAccess(data.target_user_id, groupId))
       ) {
         throw new HttpError(
           400,
@@ -374,15 +397,11 @@ exports.create = async (req, res) => {
 
       const member = getMemberInformation(target);
 
-      // Keep group details and selected leader details together
-      // inside request_data so the admin can review them.
       data.selected_member = member;
       data.full_name = member.full_name;
       data.email = member.email;
       data.phone_number = member.phone_number;
       data.current_role = member.current_role;
-
-      // Explicit leader fields are also saved for convenient display.
       data.leader_full_name = member.full_name;
       data.leader_email = member.email;
       data.leader_phone_number = member.phone_number;
@@ -402,14 +421,12 @@ exports.create = async (req, res) => {
     console.error('Create request error:', err);
 
     return res.status(err.status || 500).json({
-      error: err.status
-        ? err.message
-        : 'Failed to submit request',
+      error: err.status ? err.message : 'Failed to submit request',
     });
   }
 };
 
-// List requests.
+// LIST REQUESTS FOR ADMINISTRATORS
 exports.findAll = async (req, res) => {
   try {
     const { status, request_type } = req.query;
@@ -431,23 +448,30 @@ exports.findAll = async (req, res) => {
 
     const requests = await Requests.findAll(filters);
 
-    return res.json(requests);
+    return res.status(200).json(requests);
   } catch (err) {
     console.error('Fetch requests error:', err);
 
     return res.status(err.status || 500).json({
-      error: err.status
-        ? err.message
-        : 'Failed to fetch requests',
+      error: err.status ? err.message : 'Failed to fetch requests',
     });
   }
 };
 
-// List requests submitted by the logged-in user.
+// GET REQUESTS SUBMITTED BY THE LOGGED-IN USER
 exports.findMyRequests = async (req, res) => {
+  const userId = getId(req.user?.id);
+
+  if (!userId) {
+    return res.status(401).json({
+      error: 'Authentication required',
+    });
+  }
+
   try {
-    const requests = await Requests.findByUser(req.user.id);
-    return res.json(requests);
+    const requests = await Requests.findByUser(userId);
+
+    return res.status(200).json(requests);
   } catch (err) {
     console.error('Fetch my requests error:', err);
 
@@ -457,19 +481,23 @@ exports.findMyRequests = async (req, res) => {
   }
 };
 
-// Fetch one request.
+// FETCH ONE REQUEST
 exports.findById = async (req, res) => {
   const id = getId(req.params.id);
 
   if (!id) {
-    return res.status(400).json({ error: 'Invalid request ID' });
+    return res.status(400).json({
+      error: 'Invalid request ID',
+    });
   }
 
   try {
     const request = await Requests.findById(id);
 
     if (!request) {
-      return res.status(404).json({ error: 'Request not found' });
+      return res.status(404).json({
+        error: 'Request not found',
+      });
     }
 
     const isRequester =
@@ -479,13 +507,16 @@ exports.findById = async (req, res) => {
       Array.isArray(req.user.permissions) &&
       req.user.permissions.includes('view_requests');
 
-    const isSuperAdmin = req.user.role === 'super_admin';
+    const isSuperAdmin =
+      normalizeRole(req.user.role) === 'super_admin';
 
     if (!isRequester && !hasViewPermission && !isSuperAdmin) {
-      return res.status(403).json({ error: 'Access denied' });
+      return res.status(403).json({
+        error: 'Access denied',
+      });
     }
 
-    return res.json(request);
+    return res.status(200).json(request);
   } catch (err) {
     console.error('Fetch request error:', err);
 
@@ -495,12 +526,14 @@ exports.findById = async (req, res) => {
   }
 };
 
-// Approve a pending request.
+// APPROVE A PENDING REQUEST
 exports.approve = async (req, res) => {
   const id = getId(req.params.id);
 
   if (!id) {
-    return res.status(400).json({ error: 'Invalid request ID' });
+    return res.status(400).json({
+      error: 'Invalid request ID',
+    });
   }
 
   let client;
@@ -534,10 +567,7 @@ exports.approve = async (req, res) => {
         );
       }
 
-      const existingUser = await User.findByEmail(
-        data.email,
-        client
-      );
+      const existingUser = await User.findByEmail(data.email, client);
 
       if (existingUser) {
         throw new HttpError(409, 'Email already exists');
@@ -558,9 +588,7 @@ exports.approve = async (req, res) => {
     } else if (request.request_type === 'leader_assignment') {
       const data = request.request_data;
       const targetId = getId(data?.target_user_id);
-      const requestedRole = validateRequestedRole(
-        data?.requested_role
-      );
+      const requestedRole = validateRequestedRole(data?.requested_role);
 
       if (!targetId) {
         throw new HttpError(
@@ -600,8 +628,7 @@ exports.approve = async (req, res) => {
     } else if (request.request_type === 'group_creation') {
       const data = request.request_data || {};
 
-      const name =
-        typeof data.name === 'string' ? data.name.trim() : '';
+      const name = typeof data.name === 'string' ? data.name.trim() : '';
 
       const groupType =
         typeof data.type === 'string'
@@ -610,9 +637,7 @@ exports.approve = async (req, res) => {
 
       const parentGroupId = getId(data.parent_group_id);
       const targetId = getId(data.target_user_id);
-      const requestedRole = validateRequestedRole(
-        data.requested_role
-      );
+      const requestedRole = validateRequestedRole(data.requested_role);
 
       if (
         !name ||
@@ -626,10 +651,7 @@ exports.approve = async (req, res) => {
         );
       }
 
-      const parentGroup = await Groups.findById(
-        parentGroupId,
-        client
-      );
+      const parentGroup = await Groups.findById(parentGroupId, client);
 
       if (!parentGroup) {
         throw new HttpError(404, 'Parent group not found');
@@ -683,10 +705,157 @@ exports.approve = async (req, res) => {
 
       await UserGroup.add(targetId, newGroup.id, client);
     } else if (request.request_type === 'event') {
-      throw new HttpError(
-        501,
-        'Event approval is not implemented yet'
+      const data = request.request_data || {};
+      const groupId = getId(request.group_id);
+
+      if (!groupId) {
+        throw new HttpError(
+          400,
+          'The event request has an invalid group_id'
+        );
+      }
+
+      if (
+        typeof data.title !== 'string' ||
+        !data.title.trim() ||
+        typeof data.description !== 'string' ||
+        !data.description.trim() ||
+        !data.start_datetime ||
+        !data.end_datetime
+      ) {
+        throw new HttpError(
+          400,
+          'The event request is missing required information'
+        );
+      }
+
+      const startDate = new Date(data.start_datetime);
+      const endDate = new Date(data.end_datetime);
+
+      if (
+        Number.isNaN(startDate.getTime()) ||
+        Number.isNaN(endDate.getTime()) ||
+        endDate <= startDate
+      ) {
+        throw new HttpError(
+          400,
+          'The event request has an invalid date or time range'
+        );
+      }
+
+      if (data.location != null && typeof data.location !== 'string') {
+        throw new HttpError(
+          400,
+          'The event location must be text'
+        );
+      }
+
+      const eventResult = await client.query(
+        `INSERT INTO events (
+          group_id,
+          title,
+          description,
+          start_date,
+          end_date,
+          event_location,
+          created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *`,
+        [
+          groupId,
+          data.title.trim(),
+          data.description.trim(),
+          startDate.toISOString(),
+          endDate.toISOString(),
+          data.location?.trim() || null,
+          request.requested_by,
+        ]
       );
+
+      if (!eventResult.rows[0]) {
+        throw new HttpError(
+          500,
+          'Failed to create the approved event'
+        );
+      }
+    } else if (request.request_type === 'meeting') {
+      // MEETING APPROVAL
+      // The meeting is inserted only after administrator approval.
+      const data = request.request_data || {};
+      const groupId = getId(request.group_id);
+
+      if (!groupId) {
+        throw new HttpError(
+          400,
+          'The meeting request has an invalid group_id'
+        );
+      }
+
+      if (
+        typeof data.title !== 'string' ||
+        !data.title.trim() ||
+        typeof data.description !== 'string' ||
+        !data.description.trim() ||
+        !data.start_date ||
+        !data.end_date
+      ) {
+        throw new HttpError(
+          400,
+          'The meeting request is missing required information'
+        );
+      }
+
+      const startDate = new Date(data.start_date);
+      const endDate = new Date(data.end_date);
+
+      if (
+        Number.isNaN(startDate.getTime()) ||
+        Number.isNaN(endDate.getTime()) ||
+        endDate <= startDate
+      ) {
+        throw new HttpError(
+          400,
+          'The meeting request has an invalid date or time range'
+        );
+      }
+
+      if (data.location != null && typeof data.location !== 'string') {
+        throw new HttpError(
+          400,
+          'The meeting location must be text'
+        );
+      }
+
+      const meetingResult = await client.query(
+        `INSERT INTO meetings (
+          group_id,
+          title,
+          description,
+          start_date,
+          end_date,
+          created_by,
+          location
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *`,
+        [
+          groupId,
+          data.title.trim(),
+          data.description.trim(),
+          startDate.toISOString(),
+          endDate.toISOString(),
+          request.requested_by,
+          data.location?.trim() || null,
+        ]
+      );
+
+      if (!meetingResult.rows[0]) {
+        throw new HttpError(
+          500,
+          'Failed to create the approved meeting'
+        );
+      }
     } else {
       throw new HttpError(400, 'Unsupported request type');
     }
@@ -695,7 +864,10 @@ exports.approve = async (req, res) => {
       id,
       {
         reviewedBy: req.user.id,
-        reviewNote: req.body?.review_note || null,
+        reviewNote:
+          typeof req.body?.review_note === 'string'
+            ? req.body.review_note.trim() || null
+            : null,
       },
       client
     );
@@ -706,7 +878,10 @@ exports.approve = async (req, res) => {
 
     await client.query('COMMIT');
 
-    return res.json(approved);
+    return res.status(200).json({
+      message: 'Request approved successfully',
+      request: approved,
+    });
   } catch (err) {
     if (client) {
       await client.query('ROLLBACK').catch(() => {});
@@ -715,9 +890,7 @@ exports.approve = async (req, res) => {
     console.error('Approve request error:', err);
 
     return res.status(err.status || 500).json({
-      error: err.status
-        ? err.message
-        : 'Failed to approve request',
+      error: err.status ? err.message : 'Failed to approve request',
     });
   } finally {
     if (client) {
@@ -726,22 +899,34 @@ exports.approve = async (req, res) => {
   }
 };
 
-// Reject a pending request.
+// REJECT A PENDING REQUEST
 exports.reject = async (req, res) => {
   const id = getId(req.params.id);
 
   if (!id) {
-    return res.status(400).json({ error: 'Invalid request ID' });
+    return res.status(400).json({
+      error: 'Invalid request ID',
+    });
+  }
+
+  const reviewerId = getId(req.user?.id);
+
+  if (!reviewerId) {
+    return res.status(401).json({
+      error: 'Authentication required',
+    });
   }
 
   try {
-    const rejected = await Requests.reject(
-      id,
-      {
-        reviewedBy: req.user.id,
-        reviewNote: req.body?.review_note || null,
-      }
-    );
+    const reviewNote =
+      typeof req.body?.review_note === 'string'
+        ? req.body.review_note.trim() || null
+        : null;
+
+    const rejected = await Requests.reject(id, {
+      reviewedBy: reviewerId,
+      reviewNote,
+    });
 
     if (!rejected) {
       return res.status(409).json({
@@ -749,32 +934,39 @@ exports.reject = async (req, res) => {
       });
     }
 
-    return res.json(rejected);
+    return res.status(200).json({
+      message: 'Request rejected successfully',
+      request: rejected,
+    });
   } catch (err) {
     console.error('Reject request error:', err);
 
-    return res.status(500).json({
-      error: 'Failed to reject request',
+    return res.status(err.status || 500).json({
+      error: err.status ? err.message : 'Failed to reject request',
     });
   }
 };
 
-// Delete a request permanently.
+// DELETE A REQUEST PERMANENTLY
 exports.remove = async (req, res) => {
   const id = getId(req.params.id);
 
   if (!id) {
-    return res.status(400).json({ error: 'Invalid request ID' });
+    return res.status(400).json({
+      error: 'Invalid request ID',
+    });
   }
 
   try {
     const deleted = await Requests.delete(id);
 
     if (!deleted) {
-      return res.status(404).json({ error: 'Request not found' });
+      return res.status(404).json({
+        error: 'Request not found',
+      });
     }
 
-    return res.json(deleted);
+    return res.status(200).json(deleted);
   } catch (err) {
     console.error('Delete request error:', err);
 

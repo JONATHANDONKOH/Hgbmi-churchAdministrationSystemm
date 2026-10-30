@@ -1,25 +1,32 @@
 const express = require('express');
 const router = express.Router();
-const RequestsController = require('../Controller/requestController');
+
+const RequestController = require('../Controller/requestController');
 const { protect } = require('../middleware/authMiddleware');
-const { requirePermission } = require('../middleware/permissionMiddleware');
 
-// Submit (the controller checks the user leads the group)
-router.post('/', protect, RequestsController.create);
+router.use(protect);
 
-// Administrators
-router.get('/', protect, requirePermission('view_requests'), RequestsController.findAll);
+// Submit a request
+router.post('/', RequestController.create);
 
-// The logged-in user's own requests (before /:id)
-router.get('/mine', protect, RequestsController.findMyRequests);
+// Get requests submitted by the logged-in user
+// (must stay above '/:id' or it will be treated as an ID)
+router.get('/mine', RequestController.findMyRequests);
+router.get('/my', RequestController.findMyRequests);
 
-// One request (the controller allows the requester or view_requests)
-router.get('/:id', protect, RequestsController.findById);
+// Get all requests (apply your existing admin authorization here)
+router.get('/', RequestController.findAll);
 
-router.patch('/:id/approve', protect, requirePermission('approve_requests'), RequestsController.approve);
-router.patch('/:id/reject', protect, requirePermission('reject_requests'), RequestsController.reject);
+// Get one request
+router.get('/:id', RequestController.findById);
 
-// Delete a request (administrators only)
-router.delete('/:id', protect, requirePermission('delete_requests'), RequestsController.remove);
+// Approve a request
+router.patch('/:id/approve', RequestController.approve);
+
+// Reject a request
+router.patch('/:id/reject', RequestController.reject);
+
+// Delete a request
+router.delete('/:id', RequestController.remove);
 
 module.exports = router;

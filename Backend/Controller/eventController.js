@@ -1,4 +1,3 @@
-
 const EventModel = require('../models/eventModel');
 
 const isValidId = (value) => {
@@ -33,7 +32,166 @@ const isValidDateRange = (startDate, endDate) => {
 };
 
 const EventController = {
-  // Fetch events for a group
+  // ==========================================
+  // SUPERADMIN EVENT HANDLERS
+  // ==========================================
+
+  // Retrieve all events across all groups
+  async findAllSuperAdmin(req, res) {
+    try {
+      const events = await EventModel.findAll();
+
+      return res.status(200).json(events);
+    } catch (error) {
+      console.error('Superadmin fetch events error:', error);
+
+      return res.status(500).json({
+        message: 'Failed to fetch events',
+      });
+    }
+  },
+
+  // Retrieve one event
+  async findByIdSuperAdmin(req, res) {
+    try {
+      const { id } = req.params;
+
+      if (!isValidId(id)) {
+        return res.status(400).json({
+          message: 'A valid event ID is required',
+        });
+      }
+
+      const event = await EventModel.findById(Number(id));
+
+      if (!event) {
+        return res.status(404).json({
+          message: 'Event not found',
+        });
+      }
+
+      return res.status(200).json(event);
+    } catch (error) {
+      console.error('Superadmin fetch event error:', error);
+
+      return res.status(500).json({
+        message: 'Failed to fetch event',
+      });
+    }
+  },
+
+  // ==========================================
+  // ADMIN EVENT HANDLERS
+  // ==========================================
+
+  // Retrieve all events across all groups
+  async findAllAdmin(req, res) {
+    try {
+      const events = await EventModel.findAll();
+
+      return res.status(200).json(events);
+    } catch (error) {
+      console.error('Admin fetch events error:', error);
+
+      return res.status(500).json({
+        message: 'Failed to fetch events',
+      });
+    }
+  },
+
+  // Retrieve one event
+  async findByIdAdmin(req, res) {
+    try {
+      const { id } = req.params;
+
+      if (!isValidId(id)) {
+        return res.status(400).json({
+          message: 'A valid event ID is required',
+        });
+      }
+
+      const event = await EventModel.findById(Number(id));
+
+      if (!event) {
+        return res.status(404).json({
+          message: 'Event not found',
+        });
+      }
+
+      return res.status(200).json(event);
+    } catch (error) {
+      console.error('Admin fetch event error:', error);
+
+      return res.status(500).json({
+        message: 'Failed to fetch event',
+      });
+    }
+  },
+
+  // ==========================================
+  // GROUP EVENT HANDLERS
+  // ==========================================
+
+  // Retrieve events belonging to a particular group
+  async findAllGroup(req, res) {
+    try {
+      const { groupId } = req.params;
+
+      if (!isValidId(groupId)) {
+        return res.status(400).json({
+          message: 'A valid group ID is required',
+        });
+      }
+
+      const events = await EventModel.findAllByGroup(Number(groupId));
+
+      return res.status(200).json(events);
+    } catch (error) {
+      console.error('Group fetch events error:', error);
+
+      return res.status(500).json({
+        message: 'Failed to fetch group events',
+      });
+    }
+  },
+
+  // Retrieve one event belonging to a particular group
+  async findByIdGroup(req, res) {
+    try {
+      const { groupId, id } = req.params;
+
+      if (!isValidId(groupId) || !isValidId(id)) {
+        return res.status(400).json({
+          message: 'Valid group ID and event ID are required',
+        });
+      }
+
+      const event = await EventModel.findByIdAndGroup(
+        Number(id),
+        Number(groupId)
+      );
+
+      if (!event) {
+        return res.status(404).json({
+          message: 'Event not found in this group',
+        });
+      }
+
+      return res.status(200).json(event);
+    } catch (error) {
+      console.error('Group fetch event error:', error);
+
+      return res.status(500).json({
+        message: 'Failed to fetch group event',
+      });
+    }
+  },
+
+  // ==========================================
+  // GENERAL EVENT HANDLERS
+  // ==========================================
+
+  // Retained for existing frontend connections
   async findAll(req, res) {
     try {
       const { group_id } = req.query;
@@ -44,7 +202,7 @@ const EventController = {
         });
       }
 
-      const events = await EventModel.findAll(Number(group_id));
+      const events = await EventModel.findAllByGroup(Number(group_id));
 
       return res.status(200).json(events);
     } catch (error) {
@@ -56,7 +214,7 @@ const EventController = {
     }
   },
 
-  // Fetch one event by ID
+  // Retained for existing frontend connections
   async findById(req, res) {
     try {
       const { id } = req.params;
@@ -85,7 +243,10 @@ const EventController = {
     }
   },
 
-  // Create a new event
+  // ==========================================
+  // CREATE EVENT
+  // ==========================================
+
   async create(req, res) {
     try {
       const {
@@ -138,10 +299,14 @@ const EventController = {
     }
   },
 
-  // Update an existing event
+  // ==========================================
+  // UPDATE EVENT
+  // ==========================================
+
   async update(req, res) {
     try {
       const { id } = req.params;
+
       const {
         title,
         description,
@@ -205,7 +370,10 @@ const EventController = {
     }
   },
 
-  // Delete an existing event
+  // ==========================================
+  // DELETE EVENT
+  // ==========================================
+
   async delete(req, res) {
     try {
       const { id } = req.params;

@@ -36,6 +36,7 @@ const hasPermission = (permissions, permissionName) =>
 
 const TYPE_LABELS = {
   event: 'Event',
+  meeting: 'Meeting',
   user: 'New member',
   leader_assignment: 'Leader assignment',
   group_creation: 'Group creation',
@@ -68,43 +69,47 @@ const STATUS_STYLES = {
 
 /* ---------- Formatting ---------- */
 
-const formatDateTime = (value) =>
-  value
-    ? new Date(value).toLocaleString('en-GB', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-      })
-    : '';
+const formatDateTime = (value) => {
+  if (!value) return '';
 
-const formatEventTime = (value) => {
-  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(
-    value || ''
-  );
+  const date = new Date(value);
 
-  if (!match) return value || '';
+  if (Number.isNaN(date.getTime())) return String(value);
 
-  const [, year, month, day, hour, minute] = match;
-
-  return new Date(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    Number(hour),
-    Number(minute)
-  ).toLocaleString('en-GB', {
+  return date.toLocaleString('en-GB', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
-    hour: 'numeric',
+    hour: '2-digit',
     minute: '2-digit',
   });
 };
 
-const capitalize = (text) =>
-  text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+const formatEventTime = (value) => {
+  if (!value) return '';
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return date.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const capitalize = (text) => {
+  if (!text) return '';
+
+  const value = String(text);
+
+  return value.charAt(0).toUpperCase() + value.slice(1);
+};
 
 const getRequestData = (item) => {
   const value = item?.request_data ?? item?.requestData ?? {};
@@ -165,9 +170,21 @@ const describe = (item) => {
   if (item.request_type === 'event') {
     return {
       title: data.title || 'Untitled event',
-      detail: data.start_datetime
-        ? formatEventTime(data.start_datetime)
-        : '',
+      detail: formatEventTime(
+        data.start_datetime || data.start_date
+      ),
+    };
+  }
+
+  // Meeting request summary
+  if (item.request_type === 'meeting') {
+    return {
+      title: data.title || 'Untitled meeting',
+      detail: formatEventTime(
+        data.start_date ||
+        data.start_datetime ||
+        data.startDate
+      ),
     };
   }
 
@@ -194,7 +211,9 @@ const describe = (item) => {
   if (item.request_type === 'group_creation') {
     return {
       title: data.name || 'New group',
-      detail: [data.type, data.location].filter(Boolean).join(' · '),
+      detail: [data.type, data.location]
+        .filter(Boolean)
+        .join(' · '),
     };
   }
 
@@ -214,8 +233,43 @@ const detailRows = (item) => {
       ['Title', data.title],
       ['Description', data.description],
       ['Location', data.location],
-      ['Starts', formatEventTime(data.start_datetime)],
-      ['Ends', formatEventTime(data.end_datetime)],
+      [
+        'Starts',
+        formatEventTime(
+          data.start_datetime || data.start_date
+        ),
+      ],
+      [
+        'Ends',
+        formatEventTime(
+          data.end_datetime || data.end_date
+        ),
+      ],
+    ];
+  }
+
+  // Complete meeting information
+  if (item.request_type === 'meeting') {
+    return [
+      ['Title', data.title],
+      ['Description', data.description],
+      ['Location', data.location],
+      [
+        'Starts',
+        formatEventTime(
+          data.start_date ||
+          data.start_datetime ||
+          data.startDate
+        ),
+      ],
+      [
+        'Ends',
+        formatEventTime(
+          data.end_date ||
+          data.end_datetime ||
+          data.endDate
+        ),
+      ],
     ];
   }
 
@@ -251,7 +305,6 @@ const detailRows = (item) => {
       ['Group type', data.type],
       ['Location', data.location],
       ['Description', data.description],
-
       [
         'Parent group',
         parentGroup.name ||
@@ -259,17 +312,27 @@ const detailRows = (item) => {
           data.parent_group_id,
       ],
       ['Parent group type', parentGroup.type],
-
       ['Parent leader name', parentLeader.full_name],
       ['Parent leader phone', parentLeader.phone_number],
       ['Parent leader email', parentLeader.email],
-
       ['Proposed leader name', newLeader.full_name || 'Not available'],
       ['Proposed leader ID', newLeader.id || 'Not available'],
-      ['Proposed leader phone', newLeader.phone_number || 'Not available'],
-      ['Proposed leader email', newLeader.email || 'Not available'],
-      ['Current role', newLeader.current_role || 'Not available'],
-      ['Requested role', data.requested_role || 'Not available'],
+      [
+        'Proposed leader phone',
+        newLeader.phone_number || 'Not available',
+      ],
+      [
+        'Proposed leader email',
+        newLeader.email || 'Not available',
+      ],
+      [
+        'Current role',
+        newLeader.current_role || 'Not available',
+      ],
+      [
+        'Requested role',
+        data.requested_role || 'Not available',
+      ],
     ];
   }
 
@@ -286,18 +349,21 @@ const ui = {
     padding: '24px 0',
     color: '#0f172a',
   },
+
   title: {
     margin: 0,
     fontSize: '2rem',
     lineHeight: 1.2,
     color: '#0f172a',
   },
+
   subtitle: {
     margin: '8px 0 0',
     color: '#475569',
     fontSize: '0.96rem',
     lineHeight: 1.6,
   },
+
   card: {
     background: '#ffffff',
     border: '1px solid #e2e8f0',
@@ -305,6 +371,7 @@ const ui = {
     padding: 20,
     boxShadow: '0 10px 25px rgba(15, 23, 42, 0.05)',
   },
+
   cardHeader: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -313,21 +380,25 @@ const ui = {
     flexWrap: 'wrap',
     marginBottom: 18,
   },
+
   cardTitle: {
     margin: 0,
     fontSize: '1.2rem',
   },
+
   row: {
     display: 'flex',
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: 8,
   },
+
   grid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
     gap: 14,
   },
+
   input: {
     width: '100%',
     border: '1px solid #cbd5e1',
@@ -339,6 +410,7 @@ const ui = {
     boxSizing: 'border-box',
     fontFamily: 'inherit',
   },
+
   empty: {
     margin: 0,
     padding: 12,
@@ -347,6 +419,7 @@ const ui = {
     border: '1px dashed #cbd5e1',
     borderRadius: 12,
   },
+
   typeChip: {
     background: '#dbeafe',
     color: '#1d4ed8',
@@ -355,6 +428,7 @@ const ui = {
     fontSize: '0.75rem',
     fontWeight: 700,
   },
+
   overlay: {
     position: 'fixed',
     inset: 0,
@@ -365,6 +439,7 @@ const ui = {
     padding: 24,
     zIndex: 50,
   },
+
   modal: {
     width: 'min(720px, 100%)',
     maxHeight: '85vh',
@@ -376,6 +451,7 @@ const ui = {
     color: '#0f172a',
     boxSizing: 'border-box',
   },
+
   sectionLabel: {
     margin: '22px 0 10px',
     color: '#64748b',
@@ -384,12 +460,14 @@ const ui = {
     letterSpacing: '0.06em',
     textTransform: 'uppercase',
   },
+
   dt: {
     color: '#64748b',
     fontSize: '0.8rem',
     fontWeight: 700,
     paddingTop: 2,
   },
+
   dd: {
     margin: 0,
     color: '#334155',
@@ -407,18 +485,22 @@ const button = (variant, disabled = false) => ({
   fontFamily: 'inherit',
   cursor: disabled ? 'not-allowed' : 'pointer',
   opacity: disabled ? 0.7 : 1,
+
   ...(variant === 'approve' && {
     background: '#16a34a',
     color: '#fff',
   }),
+
   ...(variant === 'reject' && {
     background: '#dc2626',
     color: '#fff',
   }),
+
   ...(variant === 'secondary' && {
     background: '#e2e8f0',
     color: '#0f172a',
   }),
+
   ...(variant === 'dark' && {
     background: '#0f172a',
     color: '#fff',
@@ -511,7 +593,7 @@ function DetailList({ rows }) {
   );
 }
 
-/* ---------- Request card with Delete button ---------- */
+/* ---------- Request card ---------- */
 
 function RequestTile({ item, onOpen, onDelete, deleting }) {
   const [active, setActive] = useState(false);
@@ -560,6 +642,7 @@ function RequestTile({ item, onOpen, onDelete, deleting }) {
           <span style={ui.typeChip}>
             {TYPE_LABELS[item.request_type] || item.request_type}
           </span>
+
           <StatusBadge status={item.status} />
         </div>
 
@@ -653,7 +736,10 @@ function RequestModal({
       );
 
       onReviewed(updated);
-      setMessage(`Request ${updated.status || action} successfully.`);
+
+      setMessage(
+        `Request ${updated.status || action} successfully.`
+      );
     } catch (err) {
       setError(err.message);
     } finally {
@@ -685,6 +771,7 @@ function RequestModal({
               <span style={ui.typeChip}>
                 {TYPE_LABELS[item.request_type] || item.request_type}
               </span>
+
               <StatusBadge status={item.status} />
             </div>
 
@@ -738,7 +825,10 @@ function RequestModal({
             <DetailList
               rows={[
                 ['Decision', capitalize(item.status)],
-                ['Reviewed', formatDateTime(item.reviewed_at)],
+                [
+                  'Reviewed',
+                  formatDateTime(item.reviewed_at),
+                ],
                 ['Review note', item.review_note],
               ]}
             />
@@ -809,7 +899,7 @@ function RequestModal({
   );
 }
 
-/* ---------- Page ---------- */
+/* ---------- Main page ---------- */
 
 export default function AdministrationRequestsPage() {
   const [items, setItems] = useState([]);
@@ -827,7 +917,9 @@ export default function AdministrationRequestsPage() {
     setPermissionsError('');
 
     try {
-      const data = await apiRequest('/user-permissions/me', { signal });
+      const data = await apiRequest('/user-permissions/me', {
+        signal,
+      });
 
       if (!Array.isArray(data.permissions)) {
         throw new Error('The permissions response is invalid.');
@@ -836,7 +928,11 @@ export default function AdministrationRequestsPage() {
       setPermissions(data.permissions);
     } catch (err) {
       if (err.name !== 'AbortError') {
-        console.error('Failed to fetch administrator permissions:', err);
+        console.error(
+          'Failed to fetch administrator permissions:',
+          err
+        );
+
         setPermissions([]);
         setPermissionsError(
           'Could not load your permissions. Refresh the page to try again.'
@@ -855,7 +951,14 @@ export default function AdministrationRequestsPage() {
 
     try {
       const data = await apiRequest('/requests', { signal });
-      setItems(Array.isArray(data) ? data : []);
+
+      setItems(
+        Array.isArray(data)
+          ? data
+          : Array.isArray(data?.requests)
+            ? data.requests
+            : []
+      );
     } catch (err) {
       if (err.name !== 'AbortError') {
         setError(err.message);
@@ -876,15 +979,28 @@ export default function AdministrationRequestsPage() {
     return () => controller.abort();
   }, [fetchPermissions, fetchRequests]);
 
-  const canApprove = hasPermission(permissions, 'approve_requests');
-  const canReject = hasPermission(permissions, 'reject_requests');
+  const canApprove = hasPermission(
+    permissions,
+    'approve_requests'
+  );
+
+  const canReject = hasPermission(
+    permissions,
+    'reject_requests'
+  );
 
   const counts = useMemo(
     () => ({
       all: items.length,
-      pending: items.filter((item) => item.status === 'pending').length,
-      approved: items.filter((item) => item.status === 'approved').length,
-      rejected: items.filter((item) => item.status === 'rejected').length,
+      pending: items.filter(
+        (item) => item.status === 'pending'
+      ).length,
+      approved: items.filter(
+        (item) => item.status === 'approved'
+      ).length,
+      rejected: items.filter(
+        (item) => item.status === 'rejected'
+      ).length,
     }),
     [items]
   );
@@ -893,7 +1009,9 @@ export default function AdministrationRequestsPage() {
     const visible =
       statusFilter === 'all'
         ? items
-        : items.filter((item) => item.status === statusFilter);
+        : items.filter(
+            (item) => item.status === statusFilter
+          );
 
     const byGroup = new Map();
 
@@ -903,7 +1021,9 @@ export default function AdministrationRequestsPage() {
       if (!byGroup.has(groupKey)) {
         byGroup.set(groupKey, {
           id: groupKey,
-          name: item.group_name || `Group #${item.group_id ?? 'unknown'}`,
+          name:
+            item.group_name ||
+            `Group #${item.group_id ?? 'unknown'}`,
           requests: [],
         });
       }
@@ -919,22 +1039,27 @@ export default function AdministrationRequestsPage() {
   const selected =
     items.find((item) => item.id === selectedId) || null;
 
-  const closeModal = useCallback(() => setSelectedId(null), []);
+  const closeModal = useCallback(() => {
+    setSelectedId(null);
+  }, []);
 
   const handleReviewed = (updated) => {
     if (!updated || updated.id == null) return;
 
     setItems((current) =>
       current.map((item) =>
-        item.id === updated.id ? { ...item, ...updated } : item
+        item.id === updated.id
+          ? { ...item, ...updated }
+          : item
       )
     );
   };
 
-  /* Delete a request from the backend, then remove it from the page. */
   const handleDelete = async (item) => {
     const requestType =
-      TYPE_LABELS[item.request_type] || item.request_type || 'request';
+      TYPE_LABELS[item.request_type] ||
+      item.request_type ||
+      'request';
 
     const confirmed = window.confirm(
       `Are you sure you want to delete this ${requestType.toLowerCase()}? This action cannot be undone.`
@@ -970,9 +1095,10 @@ export default function AdministrationRequestsPage() {
     <div style={ui.page}>
       <header>
         <h1 style={ui.title}>Requests</h1>
+
         <p style={ui.subtitle}>
-          Requests from group leaders, organised by group. Select a request
-          to see its details.
+          Requests from group leaders, organised by group. Select a
+          request to see its details.
         </p>
       </header>
 
@@ -998,7 +1124,11 @@ export default function AdministrationRequestsPage() {
         </div>
       )}
 
-      <div style={ui.row} role="tablist" aria-label="Filter by status">
+      <div
+        style={ui.row}
+        role="tablist"
+        aria-label="Filter by status"
+      >
         {STATUS_FILTERS.map((filter) => (
           <button
             key={filter.value}
@@ -1040,10 +1170,17 @@ export default function AdministrationRequestsPage() {
               <div style={ui.cardHeader}>
                 <h2 style={ui.cardTitle}>{group.name}</h2>
 
-                <span style={{ fontSize: '0.85rem', color: '#475569' }}>
+                <span
+                  style={{
+                    fontSize: '0.85rem',
+                    color: '#475569',
+                  }}
+                >
                   {group.requests.length} request
                   {group.requests.length === 1 ? '' : 's'}
-                  {pendingCount > 0 ? ` · ${pendingCount} pending` : ''}
+                  {pendingCount > 0
+                    ? ` · ${pendingCount} pending`
+                    : ''}
                 </span>
               </div>
 

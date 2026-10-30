@@ -1,341 +1,461 @@
+
 const GroupsModel = require('../models/groupsModel');
 const Meeting = require('../models/meetingsModel');
 
 const MAX_INT = 2147483647;
 
-// "YYYY-MM-DDTHH:mm" or "YYYY-MM-DD HH:mm[:ss]", no timezone offset
+// Accepts "YYYY-MM-DDTHH:mm" or "YYYY-MM-DD HH:mm[:ss]"
 const DATETIME_REGEX =
   /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/;
 
-// Accepts 5 or "5". Returns a positive integer, or null if invalid.
-const toId = (value) => {
-  const n =
-    typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+const isValidId = (value) => {
+  const id = Number(value);
 
-  return Number.isInteger(n) && n > 0 && n <= MAX_INT ? n : null;
+  return (
+    Number.isInteger(id) &&
+    id > 0 &&
+    id <= MAX_INT
+  );
 };
 
-const isBlank = (value) =>
-  value === undefined || value === null || value === '';
+const isValidDateTime = (value) => {
+  if (typeof value !== 'string') return false;
 
-const isNonBlankString = (value) =>
-  typeof value === 'string' && value.trim().length > 0;
+  const match = value.match(DATETIME_REGEX);
 
-const isValidTitle = (value) =>
-  isNonBlankString(value) && value.trim().length <= 200;
+  if (!match) return false;
 
-const isValidLocation = (value) =>
-  typeof value === 'string' && value.trim().length <= 255;
+  const [, year, month, day, hour, minute, second = '0'] = match;
 
-// Blank location becomes null in the database
-const cleanLocation = (value) =>
-  isBlank(value) ? null : String(value).trim() || null;
+  const date = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second)
+  );
 
-// "YYYY-MM-DD"
+  return (
+    date.getFullYear() === Number(year) &&
+    date.getMonth() === Number(month) - 1 &&
+    date.getDate() === Number(day) &&
+    date.getHours() === Number(hour) &&
+    date.getMinutes() === Number(minute) &&
+    date.getSeconds() === Number(second)
+  );
+};
+
 const isValidDate = (value) => {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+  if (typeof value !== 'string') return false;
+
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (!match) return false;
+
+  const [, year, month, day] = match;
+
+  const date = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day)
+  );
+
+  return (
+    date.getFullYear() === Number(year) &&
+    date.getMonth() === Number(month) - 1 &&
+    date.getDate() === Number(day)
+  );
+};
+
+// Check whether the user can view a group's meetings and reports.
+const canAccessGroup = async (req, groupId) => {
+  if (!req.user || !req.user.id) {
     return false;
   }
 
-  const d = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
-};
+  const role = req.user.role;
 
-// Returns a Date (for comparing start and end only), or null if invalid
-const parseDateTime = (value) => {
-  if (typeof value !== 'string') return null;
-
-  const match = DATETIME_REGEX.exec(value.trim());
-  if (!match) return null;
-
-  const [year, month, day, hour, minute] = match.slice(1, 6).map(Number);
-  const second = match[6] ? Number(match[6]) : 0;
-
-  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-
-  const valid =
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day &&
-    date.getUTCHours() === hour &&
-    date.getUTCMinutes() === minute &&
-    date.getUTCSeconds() === second;
-
-  return valid ? date : null;
-};
-
-const DATETIME_ERROR = 'must be a valid date and time like 2026-10-18T10:00';
-
-// super_admin sees every group; everyone else must belong to the group
-const canAccessGroup = async (req, groupId) => {
-  if (req.user.role === 'super_admin') return true;
-  return Meeting.isUserInGroup(req.user.id, groupId);
-};
-
-// Known database errors that are the client's fault
-const dbErrorResponse = (err) => {
-  if (err.code === '23503') {
-    return { status: 400, error: 'A referenced group or user no longer exists' };
+  // Admin and super_admin currently have the same viewing access.
+  if (role === 'admin' || role === 'super_admin') {
+    return true;
   }
 
-  if (err.code === '23514') {
-    return { status: 400, error: 'endDate must be after startDate' };
+  const group = await GroupsModel.findById(groupId);
+
+  if (!group) {
+    return false;
   }
 
-  if (err.code === '22007' || err.code === '22008') {
-    return { status: 400, error: 'Invalid date or time' };
+  // Group leader can access their own group.
+  if (String(group.leader_id) === String(req.user.id)) {
+    return true;
   }
 
-  return null;
+  // Ordinary group member can view their group's meetings.
+  return await Meeting.isUserInGroup(req.user.id, groupId);
+};
+
+// Only admins, super_admins and the actual group leader
+// can manage meetings.
+const canManageMeetings = async (req, groupId) => {
+  if (!req.user || !req.user.id) {
+    return false;
+  }
+
+  const role = req.user.role;
+
+  if (role === 'admin' || role === 'super_admin') {
+    return true;
+  }
+
+  const group = await GroupsModel.findById(groupId);
+
+  if (!group) {
+    return false;
+  }
+
+  return String(group.leader_id) === String(req.user.id);
 };
 
 const MeetingsController = {
-  // POST /meetings
-  // Body: { groupId, title, description, startDate, endDate, location? }
+  // Create a meeting.
   async create(req, res) {
     try {
-      const { groupId, title, description, startDate, endDate, location } =
-        req.body;
+      const {
+        groupId,
+        title,
+        description,
+        startDate,
+        endDate,
+        location,
+      } = req.body;
 
-      const normalizedGroupId = toId(groupId);
-
-      if (!normalizedGroupId) {
-        return res.status(400).json({ error: 'A valid groupId is required' });
-      }
-
-      if (!isValidTitle(title)) {
+      if (!isValidId(groupId)) {
         return res.status(400).json({
-          error: 'title is required (max 200 characters)',
+          message: 'A valid group ID is required.',
         });
       }
 
-      if (!isNonBlankString(description)) {
-        return res.status(400).json({ error: 'description is required' });
-      }
-
-      if (!isBlank(location) && !isValidLocation(location)) {
+      if (
+        typeof title !== 'string' ||
+        !title.trim()
+      ) {
         return res.status(400).json({
-          error: 'location must be text of at most 255 characters',
+          message: 'Meeting title is required.',
         });
       }
 
-      const start = parseDateTime(startDate);
-      const end = parseDateTime(endDate);
-
-      if (!start) {
-        return res.status(400).json({ error: `startDate ${DATETIME_ERROR}` });
+      if (
+        typeof description !== 'string' ||
+        !description.trim()
+      ) {
+        return res.status(400).json({
+          message: 'Meeting description is required.',
+        });
       }
 
-      if (!end) {
-        return res.status(400).json({ error: `endDate ${DATETIME_ERROR}` });
+      if (
+        !isValidDateTime(startDate) ||
+        !isValidDateTime(endDate)
+      ) {
+        return res.status(400).json({
+          message: 'Valid meeting start and end dates are required.',
+        });
       }
 
-      if (end <= start) {
-        return res.status(400).json({ error: 'endDate must be after startDate' });
+      if (
+        new Date(endDate.replace(' ', 'T')) <=
+        new Date(startDate.replace(' ', 'T'))
+      ) {
+        return res.status(400).json({
+          message: 'Meeting end date must be after the start date.',
+        });
       }
 
-      if (!(await canAccessGroup(req, normalizedGroupId))) {
+      const group = await GroupsModel.findById(Number(groupId));
+
+      if (!group) {
+        return res.status(404).json({
+          message: 'Group not found.',
+        });
+      }
+
+      const allowed = await canManageMeetings(req, Number(groupId));
+
+      if (!allowed) {
         return res.status(403).json({
-          error: 'You do not have access to this group',
+          message: 'You do not have permission to create meetings for this group.',
         });
-      }
-
-      if (!(await GroupsModel.findById(normalizedGroupId))) {
-        return res.status(404).json({ error: 'Group not found' });
       }
 
       const meeting = await Meeting.create({
-        groupId: normalizedGroupId,
+        groupId: Number(groupId),
         title: title.trim(),
         description: description.trim(),
-        startDate: startDate.trim(),
-        endDate: endDate.trim(),
-        location: cleanLocation(location),
+        startDate,
+        endDate,
+        location: location || null,
         createdBy: req.user.id,
       });
 
-      return res.status(201).json(meeting);
-    } catch (err) {
-      const known = dbErrorResponse(err);
-      if (known) return res.status(known.status).json({ error: known.error });
+      return res.status(201).json({
+        message: 'Meeting created successfully.',
+        meeting,
+      });
+    } catch (error) {
+      console.error('Create meeting error:', error);
 
-      console.error('create meeting error:', err);
-      return res.status(500).json({ error: 'Failed to create meeting' });
+      return res.status(500).json({
+        message: 'Failed to create meeting.',
+      });
     }
   },
 
-  // GET /meetings?groupId=5&from=YYYY-MM-DD&to=YYYY-MM-DD
+  // Get meetings belonging to a group.
   async findByGroup(req, res) {
     try {
-      const groupId = toId(req.query.groupId);
-      const { from, to } = req.query;
+      const { groupId, from, to } = req.query;
 
-      if (!groupId) {
-        return res.status(400).json({ error: 'A valid groupId is required' });
-      }
-
-      if (!isBlank(from) && !isValidDate(from)) {
-        return res.status(400).json({ error: 'from must be YYYY-MM-DD' });
-      }
-
-      if (!isBlank(to) && !isValidDate(to)) {
-        return res.status(400).json({ error: 'to must be YYYY-MM-DD' });
-      }
-
-      if (!(await canAccessGroup(req, groupId))) {
-        return res.status(403).json({
-          error: 'You do not have access to this group',
+      if (!isValidId(groupId)) {
+        return res.status(400).json({
+          message: 'A valid group ID is required.',
         });
       }
 
-      const meetings = await Meeting.findByGroup(groupId, {
-        from: isBlank(from) ? undefined : from,
-        to: isBlank(to) ? undefined : to,
+      if (from && !isValidDate(from)) {
+        return res.status(400).json({
+          message: 'Invalid start date filter.',
+        });
+      }
+
+      if (to && !isValidDate(to)) {
+        return res.status(400).json({
+          message: 'Invalid end date filter.',
+        });
+      }
+
+      if (from && to && from > to) {
+        return res.status(400).json({
+          message: 'The start date cannot be after the end date.',
+        });
+      }
+
+      const group = await GroupsModel.findById(Number(groupId));
+
+      if (!group) {
+        return res.status(404).json({
+          message: 'Group not found.',
+        });
+      }
+
+      const allowed = await canAccessGroup(req, Number(groupId));
+
+      if (!allowed) {
+        return res.status(403).json({
+          message: 'You do not have access to this group.',
+        });
+      }
+
+      const meetings = await Meeting.findByGroup(Number(groupId), {
+        from,
+        to,
       });
 
-      return res.json(meetings);
-    } catch (err) {
-      console.error('findByGroup meetings error:', err);
-      return res.status(500).json({ error: 'Failed to fetch meetings' });
+      return res.status(200).json({
+        meetings,
+      });
+    } catch (error) {
+      console.error('Find meetings by group error:', error);
+
+      return res.status(500).json({
+        message: 'Failed to retrieve meetings.',
+      });
     }
   },
 
-  // GET /meetings/:id
+  // Get one meeting.
   async findById(req, res) {
     try {
-      const id = toId(req.params.id);
-      if (!id) return res.status(400).json({ error: 'Invalid meeting id' });
+      const { id } = req.params;
 
-      const meeting = await Meeting.findById(id);
-      if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
-
-      if (!(await canAccessGroup(req, meeting.group_id))) {
-        return res.status(403).json({
-          error: 'You do not have access to this meeting',
+      if (!isValidId(id)) {
+        return res.status(400).json({
+          message: 'Invalid meeting ID.',
         });
       }
 
-      return res.json(meeting);
-    } catch (err) {
-      console.error('findById meeting error:', err);
-      return res.status(500).json({ error: 'Failed to fetch meeting' });
+      const meeting = await Meeting.findById(Number(id));
+
+      if (!meeting) {
+        return res.status(404).json({
+          message: 'Meeting not found.',
+        });
+      }
+
+      const allowed = await canAccessGroup(req, meeting.group_id);
+
+      if (!allowed) {
+        return res.status(403).json({
+          message: 'You do not have access to this meeting.',
+        });
+      }
+
+      return res.status(200).json({
+        meeting,
+      });
+    } catch (error) {
+      console.error('Find meeting error:', error);
+
+      return res.status(500).json({
+        message: 'Failed to retrieve meeting.',
+      });
     }
   },
 
-  // PUT /meetings/:id
-  // Body: any of { title, description, startDate, endDate, location }
-  // location: null (or "") clears it
+  // Update a meeting.
   async update(req, res) {
     try {
-      const id = toId(req.params.id);
-      if (!id) return res.status(400).json({ error: 'Invalid meeting id' });
+      const { id } = req.params;
 
-      const { title, description, startDate, endDate, location } = req.body;
-
-      if (
-        [title, description, startDate, endDate, location].every(
-          (v) => v === undefined
-        )
-      ) {
+      if (!isValidId(id)) {
         return res.status(400).json({
-          error:
-            'Provide at least one of title, description, startDate, endDate or location',
+          message: 'Invalid meeting ID.',
         });
       }
 
-      if (title !== undefined && !isValidTitle(title)) {
-        return res.status(400).json({
-          error: 'title must be 1-200 characters',
+      const meeting = await Meeting.findById(Number(id));
+
+      if (!meeting) {
+        return res.status(404).json({
+          message: 'Meeting not found.',
         });
       }
 
-      if (description !== undefined && !isNonBlankString(description)) {
-        return res.status(400).json({ error: 'description cannot be empty' });
-      }
+      const allowed = await canManageMeetings(req, meeting.group_id);
 
-      if (
-        location !== undefined &&
-        location !== null &&
-        !isValidLocation(location)
-      ) {
-        return res.status(400).json({
-          error: 'location must be text of at most 255 characters',
-        });
-      }
-
-      let start = null;
-      let end = null;
-
-      if (startDate !== undefined) {
-        start = parseDateTime(startDate);
-
-        if (!start) {
-          return res.status(400).json({ error: `startDate ${DATETIME_ERROR}` });
-        }
-      }
-
-      if (endDate !== undefined) {
-        end = parseDateTime(endDate);
-
-        if (!end) {
-          return res.status(400).json({ error: `endDate ${DATETIME_ERROR}` });
-        }
-      }
-
-      if (start && end && end <= start) {
-        return res.status(400).json({ error: 'endDate must be after startDate' });
-      }
-
-      const existing = await Meeting.findById(id);
-      if (!existing) return res.status(404).json({ error: 'Meeting not found' });
-
-      if (!(await canAccessGroup(req, existing.group_id))) {
+      if (!allowed) {
         return res.status(403).json({
-          error: 'You do not have access to this meeting',
+          message: 'You do not have permission to update this meeting.',
         });
       }
 
-      const updated = await Meeting.update(id, {
-        title: title?.trim(),
-        description: description?.trim(),
-        startDate: startDate?.trim(),
-        endDate: endDate?.trim(),
-        location: location === undefined ? undefined : cleanLocation(location),
+      const {
+        title,
+        description,
+        startDate,
+        endDate,
+        location,
+      } = req.body;
+
+      if (
+        title !== undefined &&
+        (typeof title !== 'string' || !title.trim())
+      ) {
+        return res.status(400).json({
+          message: 'Meeting title cannot be empty.',
+        });
+      }
+
+      if (
+        description !== undefined &&
+        (typeof description !== 'string' || !description.trim())
+      ) {
+        return res.status(400).json({
+          message: 'Meeting description cannot be empty.',
+        });
+      }
+
+      if (
+        startDate !== undefined &&
+        !isValidDateTime(startDate)
+      ) {
+        return res.status(400).json({
+          message: 'Invalid meeting start date.',
+        });
+      }
+
+      if (
+        endDate !== undefined &&
+        !isValidDateTime(endDate)
+      ) {
+        return res.status(400).json({
+          message: 'Invalid meeting end date.',
+        });
+      }
+
+      const finalStartDate = startDate || meeting.start_date;
+      const finalEndDate = endDate || meeting.end_date;
+
+      if (
+        new Date(String(finalEndDate).replace(' ', 'T')) <=
+        new Date(String(finalStartDate).replace(' ', 'T'))
+      ) {
+        return res.status(400).json({
+          message: 'Meeting end date must be after the start date.',
+        });
+      }
+
+      const updatedMeeting = await Meeting.update(Number(id), {
+        title: title !== undefined ? title.trim() : undefined,
+        description:
+          description !== undefined ? description.trim() : undefined,
+        startDate,
+        endDate,
+        location,
       });
 
-      if (!updated) return res.status(404).json({ error: 'Meeting not found' });
+      return res.status(200).json({
+        message: 'Meeting updated successfully.',
+        meeting: updatedMeeting,
+      });
+    } catch (error) {
+      console.error('Update meeting error:', error);
 
-      return res.json(updated);
-    } catch (err) {
-      const known = dbErrorResponse(err);
-      if (known) return res.status(known.status).json({ error: known.error });
-
-      console.error('update meeting error:', err);
-      return res.status(500).json({ error: 'Failed to update meeting' });
+      return res.status(500).json({
+        message: 'Failed to update meeting.',
+      });
     }
   },
 
-  // DELETE /meetings/:id
+  // Delete a meeting.
   async remove(req, res) {
     try {
-      const id = toId(req.params.id);
-      if (!id) return res.status(400).json({ error: 'Invalid meeting id' });
+      const { id } = req.params;
 
-      const existing = await Meeting.findById(id);
-      if (!existing) return res.status(404).json({ error: 'Meeting not found' });
-
-      if (!(await canAccessGroup(req, existing.group_id))) {
-        return res.status(403).json({
-          error: 'You do not have access to this meeting',
+      if (!isValidId(id)) {
+        return res.status(400).json({
+          message: 'Invalid meeting ID.',
         });
       }
 
-      await Meeting.remove(id);
+      const meeting = await Meeting.findById(Number(id));
 
-      return res.json({ message: 'Meeting deleted' });
-    } catch (err) {
-      console.error('remove meeting error:', err);
-      return res.status(500).json({ error: 'Failed to delete meeting' });
+      if (!meeting) {
+        return res.status(404).json({
+          message: 'Meeting not found.',
+        });
+      }
+
+      const allowed = await canManageMeetings(req, meeting.group_id);
+
+      if (!allowed) {
+        return res.status(403).json({
+          message: 'You do not have permission to delete this meeting.',
+        });
+      }
+
+      await Meeting.remove(Number(id));
+
+      return res.status(200).json({
+        message: 'Meeting deleted successfully.',
+      });
+    } catch (error) {
+      console.error('Delete meeting error:', error);
+
+      return res.status(500).json({
+        message: 'Failed to delete meeting.',
+      });
     }
   },
 };

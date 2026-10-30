@@ -1,4 +1,3 @@
-
 const UserGroup = require('../models/userGroupScopeModel');
 
 const toPositiveInt = (value) => {
@@ -119,6 +118,8 @@ const UserGroupController = {
   },
 
   // GET /user-groups/group/:groupId/members
+  // The logged-in user is never included in the result.
+  // Add ?includeSelf=true to return everyone.
   async findMembersByGroup(req, res) {
     try {
       const groupId = toPositiveInt(req.params.groupId);
@@ -131,7 +132,20 @@ const UserGroupController = {
 
       const members = await UserGroup.findMembersByGroupId(groupId);
 
-      return res.json(members);
+      const includeSelf = req.query?.includeSelf === 'true';
+      const loggedInId = req.user?.id;
+
+      if (includeSelf || loggedInId === undefined || loggedInId === null) {
+        return res.json(members);
+      }
+
+      const visibleMembers = members.filter((member) => {
+        const memberUserId = member?.user_id ?? member?.id;
+
+        return String(memberUserId) !== String(loggedInId);
+      });
+
+      return res.json(visibleMembers);
     } catch (err) {
       console.error('userGroup.findMembersByGroup error:', err);
       return res.status(500).json({
