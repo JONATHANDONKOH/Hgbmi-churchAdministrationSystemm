@@ -20,6 +20,17 @@ export const cellNavigation = [
   { label: 'Attendance', path: '/cellManagementDashboard/attendance' },
 ];
 
+export const departmentNavigation = [
+  { label: 'Dashboard', path: '/departmentManagementDashboard' },
+  { label: 'Members', path: '/departmentManagementDashboard/members' },
+  { label: 'Leaders', path: '/departmentManagementDashboard/leaders' },
+  { label: 'Meetings', path: '/departmentManagementDashboard/meetings' },
+  { label: 'Events', path: '/departmentManagementDashboard/events' },
+  { label: 'Attendance', path: '/departmentManagementDashboard/attendance' },
+  { label: 'Reports', path: '/departmentManagementDashboard/reports' },
+  { label: 'Messaging', path: '/departmentManagementDashboard/messaging' },
+];
+
 export const superAdminNavigation = [
   { label: 'Dashboard', path: '/super-admin/dashboard' },
   { label: 'Fellowships', path: '/super-admin/fellowships' },

@@ -1,5 +1,6 @@
+
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import '../../styles/administrationManagement.css';
 
 const API_ROOT = (
@@ -27,7 +28,6 @@ const ATTENDANCE_FILTERS = [
   { value: 'unrecorded', label: 'Not marked' },
 ];
 
-// Order in which statuses are listed inside the session popup.
 const SESSION_STATUS_ORDER = [
   'present',
   'late',
@@ -425,8 +425,6 @@ const styles = {
     fontSize: '14px',
     lineHeight: 1.6,
   },
-
-  // Session popup
   modalOverlay: {
     position: 'fixed',
     inset: 0,
@@ -494,12 +492,6 @@ const styles = {
     fontSize: '13px',
     color: '#667085',
     textAlign: 'right',
-  },
-  statusEmpty: {
-    margin: 0,
-    padding: '12px 0',
-    fontSize: '14px',
-    color: '#667085',
   },
 };
 
@@ -598,9 +590,7 @@ function formatDate(value) {
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
+  if (Number.isNaN(date.getTime())) return String(value);
 
   return date.toLocaleDateString(undefined, {
     year: 'numeric',
@@ -645,7 +635,9 @@ function coversDay(item, day) {
     item.start_date ??
     item.start_datetime ??
     item.datetime ??
-    item.date
+    item.date ??
+    item.event_date ??
+    item.meeting_date
   );
 
   const end = toDay(item.end_date ?? item.end_datetime) || start;
@@ -875,9 +867,8 @@ function SessionAttendanceModal({ session, onClose }) {
 
 export default function GroupsReport() {
   const { groupId } = useParams();
-  const location = useLocation();
 
-  const [group, setGroup] = useState(location.state?.group || null);
+  const [group, setGroup] = useState(null);
   const [members, setMembers] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [attendance, setAttendance] = useState([]);
@@ -908,6 +899,18 @@ export default function GroupsReport() {
       setError('');
       setWarnings([]);
 
+      setGroup(null);
+      setMembers([]);
+      setSessions([]);
+      setAttendance([]);
+      setMeetings([]);
+      setEvents([]);
+
+      setActiveSection(null);
+      setSelectedDate('');
+      setAttendanceFilter('all');
+      setSelectedSessionId(null);
+
       const warningMessages = [];
 
       async function loadOptional(label, path, keys = []) {
@@ -926,19 +929,23 @@ export default function GroupsReport() {
       }
 
       try {
-        // Load group information.
-        if (location.state?.group) {
-          setGroup(location.state.group);
-        } else {
-          const groupData = await fetchJson(
-            `/groups/${encodeURIComponent(groupId)}`,
-            signal
-          );
+        // The backend is the source of truth for group information.
+        const groupData = await fetchJson(
+          `/groups/${encodeURIComponent(groupId)}`,
+          signal
+        );
 
-          setGroup(getGroup(groupData));
+        const selectedGroup = getGroup(groupData);
+
+        if (!selectedGroup || String(selectedGroup.id) !== String(groupId)) {
+          throw new Error('The requested group could not be verified.');
         }
 
-        // Load group members and attendance sessions.
+        if (signal.aborted) return;
+
+        setGroup(selectedGroup);
+
+        // Load group members and sessions.
         const [memberRows, sessionRows] = await Promise.all([
           loadOptional(
             'Membership report',
@@ -957,7 +964,7 @@ export default function GroupsReport() {
         setMembers(memberRows);
         setSessions(sessionRows);
 
-        // Load attendance records for each session.
+        // Load attendance records for every session.
         const attendanceResults = await Promise.all(
           sessionRows.map(async (session) => {
             const sessionId = session.id ?? session.session_id;
@@ -990,7 +997,7 @@ export default function GroupsReport() {
               if (err.name === 'AbortError') throw err;
 
               warningMessages.push(
-                `Attendance for session ${sessionId} could not be loaded.`
+                `Attendance for session ${sessionId} could not be loaded: ${err.message}`
               );
 
               return [];
@@ -1002,7 +1009,7 @@ export default function GroupsReport() {
 
         setAttendance(attendanceResults.flat());
 
-        // Load meetings for this group.
+        // Load meetings for the selected group.
         const meetingRows = await loadOptional(
           'Meeting report',
           `/meetings?groupId=${encodeURIComponent(groupId)}`,
@@ -1019,14 +1026,13 @@ export default function GroupsReport() {
               meeting.group?.id;
 
             return (
-              meetingGroupId == null ||
+              meetingGroupId != null &&
               String(meetingGroupId) === String(groupId)
             );
           })
         );
 
-        // Load events directly for the selected group.
-        // This uses GET /api/events/group/:groupId.
+        // Load events for the selected group.
         const eventRows = await loadOptional(
           'Event report',
           `/events/group/${encodeURIComponent(groupId)}`,
@@ -1035,7 +1041,19 @@ export default function GroupsReport() {
 
         if (signal.aborted) return;
 
-        setEvents(eventRows);
+        setEvents(
+          eventRows.filter((event) => {
+            const eventGroupId =
+              event.group_id ??
+              event.groupId ??
+              event.group?.id;
+
+            return (
+              eventGroupId == null ||
+              String(eventGroupId) === String(groupId)
+            );
+          })
+        );
 
         setWarnings([...new Set(warningMessages)]);
       } catch (err) {
@@ -1052,9 +1070,8 @@ export default function GroupsReport() {
     loadReport();
 
     return () => controller.abort();
-  }, [groupId, location.state]);
+  }, [groupId]);
 
-  // Attendance, events and meetings narrowed to the selected day.
   const dayAttendance = useMemo(() => {
     if (!selectedDate) return attendance;
 
@@ -1099,7 +1116,6 @@ export default function GroupsReport() {
     return { ...summary, marked, attended, rate };
   }, [dayAttendance]);
 
-  // One row per session for the selected period.
   const sessionBreakdown = useMemo(() => {
     const map = new Map();
 
@@ -1125,7 +1141,6 @@ export default function GroupsReport() {
     return [...map.values()];
   }, [dayAttendance]);
 
-  // The session currently open in the popup, with its own member records.
   const selectedSession = useMemo(() => {
     if (selectedSessionId == null) return null;
 
@@ -1143,7 +1158,6 @@ export default function GroupsReport() {
     };
   }, [attendance, selectedSessionId]);
 
-  // Close the popup with the Escape key.
   useEffect(() => {
     if (selectedSessionId == null) return undefined;
 
@@ -1263,7 +1277,6 @@ export default function GroupsReport() {
           </div>
         )}
 
-        {/* DATE FILTER */}
         <div style={styles.dateBar}>
           <div style={styles.dateField}>
             <label htmlFor="report-date" style={styles.dateLabel}>
@@ -1298,7 +1311,7 @@ export default function GroupsReport() {
 
         <p style={styles.sectionLabel}>Reports</p>
 
-        <div style={styles.overviewGrid} aria-label="Group report categories">
+        <div className="report-overview-grid" style={styles.overviewGrid}>
           {reportCards.map((card) => {
             const isFinance = card.id === 'finance';
             const isActive = activeSection === card.id;
@@ -1417,8 +1430,8 @@ export default function GroupsReport() {
               onRowClick={(row) => setSelectedSessionId(row.id)}
               emptyMessage={
                 selectedDate
-                  ? 'No attendance sessions were held on this date.'
-                  : 'No attendance sessions were found for this group.'
+                  ? 'No attendance records were found on this date.'
+                  : 'No attendance records were found for this group.'
               }
             />
 
@@ -1507,9 +1520,9 @@ export default function GroupsReport() {
                   render: (row) =>
                     formatDate(
                       row.start_date ||
-                        row.datetime ||
-                        row.event_date ||
-                        row.date
+                      row.datetime ||
+                      row.event_date ||
+                      row.date
                     ),
                 },
                 {
@@ -1556,9 +1569,9 @@ export default function GroupsReport() {
                   render: (row) =>
                     formatDate(
                       row.start_date ||
-                        row.datetime ||
-                        row.meeting_date ||
-                        row.date
+                      row.datetime ||
+                      row.meeting_date ||
+                      row.date
                     ),
                 },
                 {

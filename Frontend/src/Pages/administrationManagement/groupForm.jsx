@@ -1,590 +1,810 @@
+
 import { useEffect, useMemo, useState } from 'react';
-import SearchBar from '../../component/searchBar';
 import '../../styles/administrationManagement.css';
 
 const API_BASE = (
   import.meta.env.VITE_API_URL || 'http://localhost:5000'
 ).replace(/\/$/, '');
 
-function getArray(data) {
+const groupTypes = [
+  'fellowship',
+  'cell',
+  'department',
+  'ministry',
+];
+
+const leaderRoles = [
+  'group_leader',
+  'assistant_leader',
+  'fellowship_leader',
+  'cell_leader',
+  'department_leader',
+  'ministry_leader',
+  'women_leader',
+];
+
+function getPermissions(data) {
   if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.groups)) return data.groups;
+  if (Array.isArray(data?.permissions)) return data.permissions;
   if (Array.isArray(data?.data)) return data.data;
-  if (Array.isArray(data?.members)) return data.members;
-  if (Array.isArray(data?.users)) return data.users;
+  if (Array.isArray(data?.userPermissions)) return data.userPermissions;
   return [];
 }
 
-function getLeaderName(group) {
+function getPermissionId(permission) {
+  return permission.id ?? permission.permission_id;
+}
+
+function getPermissionName(permission) {
+  if (typeof permission === 'string') return permission;
+
   return (
-    group?.leader_name ||
-    group?.leader_full_name ||
-    group?.leader?.full_name ||
-    group?.leader?.name ||
-    (group?.leader_id ? 'Leader assigned' : 'No leader assigned')
+    permission.name ||
+    permission.permission_name ||
+    permission.label ||
+    `Permission ${permission.id ?? ''}`
   );
 }
 
-function getMemberName(member) {
-  return (
-    member?.full_name ||
-    member?.name ||
-    member?.user?.full_name ||
-    member?.user?.name ||
-    'Unnamed member'
-  );
+async function readResponse(response) {
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message || `Request failed with status ${response.status}.`
+    );
+  }
+
+  return data;
 }
 
-function getMemberId(member) {
-  // Prefer the actual user id over a user_groups/join-record id.
-  return member?.user_id ?? member?.user?.id ?? member?.member_id ?? member?.id ?? null;
-}
+export default function CreateGroupLeader({ onCancel, onSubmit }) {
+  const [form, setForm] = useState({
+    fullName: '',
+    email: '',
+    phoneNumber: '',
+    password: '',
+    confirmPassword: '',
+    role: 'group_leader',
+    groupName: '',
+    groupType: '',
+    location: '',
+    description: '',
+  });
 
-function getMemberEmail(member) {
-  return member?.email || member?.user?.email || '—';
-}
+  const [permissions, setPermissions] = useState([]);
+  const [selectedPermissions, setSelectedPermissions] = useState([]);
 
-function getMemberPhone(member) {
-  return (
-    member?.phone_number ||
-    member?.phone ||
-    member?.user?.phone_number ||
-    member?.user?.phone ||
-    '—'
-  );
-}
+  const [permissionsLoading, setPermissionsLoading] = useState(true);
+  const [permissionsError, setPermissionsError] = useState('');
 
-function getMemberRole(member) {
-  return member?.role || member?.user?.role || member?.group_role || 'Member';
-}
-
-const tableStyles = {
-  wrapper: {
-    width: '100%',
-    overflowX: 'auto',
-    border: '1px solid #cbd5e1',
-    borderRadius: '8px',
-    background: '#fff',
-    marginTop: '12px',
-  },
-  table: {
-    width: '100%',
-    minWidth: '760px',
-    borderCollapse: 'collapse',
-    fontSize: '14px',
-    color: '#1f2937',
-  },
-  headerCell: {
-    padding: '13px 14px',
-    textAlign: 'left',
-    whiteSpace: 'nowrap',
-    background: '#e8eef5',
-    color: '#1e293b',
-    border: '1px solid #cbd5e1',
-    fontWeight: 700,
-  },
-  cell: {
-    padding: '12px 14px',
-    textAlign: 'left',
-    border: '1px solid #dbe2ea',
-    verticalAlign: 'middle',
-  },
-};
-
-export default function AdministrationFellowship() {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [fellowships, setFellowships] = useState([]);
-  const [selectedFellowship, setSelectedFellowship] = useState(null);
-  const [members, setMembers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [membersLoading, setMembersLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [membersError, setMembersError] = useState('');
+  const [success, setSuccess] = useState('');
 
+  // Fetch permissions assigned to the logged-in administrator.
   useEffect(() => {
     let cancelled = false;
 
-    async function fetchFellowships() {
-      setLoading(true);
-      setError('');
-
+    async function fetchPermissions() {
       try {
-        const response = await fetch(`${API_BASE}/api/groups`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { Accept: 'application/json' },
-        });
+        setPermissionsLoading(true);
+        setPermissionsError('');
 
-        const data = await response.json().catch(() => ({}));
+        const response = await fetch(
+          `${API_BASE}/api/permissions/mine`,
+          {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+              Accept: 'application/json',
+            },
+          }
+        );
 
-        if (!response.ok) {
-          throw new Error(
-            data.message || data.error || 'Failed to fetch fellowships.'
+        const data = await readResponse(response);
+
+        if (!cancelled) {
+          const availablePermissions = getPermissions(data);
+
+          // Permission assignment requires actual database IDs.
+          const validPermissions = availablePermissions.filter(
+            (permission) =>
+              getPermissionId(permission) !== undefined &&
+              getPermissionId(permission) !== null
           );
+
+          setPermissions(validPermissions);
         }
-
-        const fellowshipGroups = getArray(data).filter(
-          (group) =>
-            String(group.type || '').trim().toLowerCase() === 'fellowship'
-        );
-
-        const groupsWithCounts = await Promise.all(
-          fellowshipGroups.map(async (group) => {
-            try {
-              const membersResponse = await fetch(
-                `${API_BASE}/api/user-groups/group/${group.id}/members`,
-                {
-                  method: 'GET',
-                  credentials: 'include',
-                  headers: { Accept: 'application/json' },
-                }
-              );
-
-              if (!membersResponse.ok) {
-                return {
-                  ...group,
-                  memberCount: Number(group.member_count ?? 0),
-                  memberCountUnavailable: true,
-                };
-              }
-
-              const membersData = await membersResponse.json();
-              const groupMembers = getArray(membersData);
-
-              return {
-                ...group,
-                memberCount: groupMembers.length,
-                memberCountUnavailable: false,
-              };
-            } catch {
-              return {
-                ...group,
-                memberCount: Number(group.member_count ?? 0),
-                memberCountUnavailable: true,
-              };
-            }
-          })
-        );
-
-        if (!cancelled) setFellowships(groupsWithCounts);
       } catch (err) {
         if (!cancelled) {
-          setError(
-            err.message || 'Something went wrong while loading fellowships.'
+          setPermissionsError(
+            err.message || 'Unable to load your permissions.'
           );
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setPermissionsLoading(false);
+        }
       }
     }
 
-    fetchFellowships();
+    fetchPermissions();
 
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const filteredFellowships = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
+  // Group the administrator's permissions by database category.
+  const permissionCategories = useMemo(() => {
+    const grouped = new Map();
 
-    return fellowships.filter((group) => {
-      const searchableText = `
-        ${group.name || ''}
-        ${getLeaderName(group)}
-        ${group.location || ''}
-      `.toLowerCase();
+    permissions.forEach((permission) => {
+      const categoryId = permission.category_id ?? 'other';
 
-      return searchableText.includes(query);
+      if (!grouped.has(categoryId)) {
+        grouped.set(categoryId, {
+          id: categoryId,
+          name: permission.category_name || 'Other Permissions',
+          permissions: [],
+        });
+      }
+
+      grouped.get(categoryId).permissions.push(permission);
     });
-  }, [fellowships, searchTerm]);
 
-  const totalMembers = fellowships.reduce(
-    (total, group) => total + (group.memberCount || 0),
-    0
-  );
+    return Array.from(grouped.values()).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  }, [permissions]);
 
-  const assignedLeaders = fellowships.filter(
-    (group) =>
-      group.leader_id ||
-      group.leader_name ||
-      group.leader_full_name ||
-      group.leader
-  ).length;
+  function handleChange(event) {
+    const { name, value } = event.target;
 
-  async function openFellowship(group) {
-    setSelectedFellowship(group);
-    setMembers([]);
-    setMembersError('');
-    setMembersLoading(true);
+    setForm((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
+  }
+
+  function togglePermission(permissionId) {
+    setSelectedPermissions((previous) =>
+      previous.includes(permissionId)
+        ? previous.filter((id) => id !== permissionId)
+        : [...previous, permissionId]
+    );
+  }
+
+  function toggleCategory(categoryPermissions) {
+    const categoryIds = categoryPermissions.map(getPermissionId);
+
+    const allSelected = categoryIds.every((id) =>
+      selectedPermissions.includes(id)
+    );
+
+    setSelectedPermissions((previous) => {
+      if (allSelected) {
+        return previous.filter((id) => !categoryIds.includes(id));
+      }
+
+      return [...new Set([...previous, ...categoryIds])];
+    });
+  }
+
+  function isCategorySelected(categoryPermissions) {
+    return (
+      categoryPermissions.length > 0 &&
+      categoryPermissions.every((permission) =>
+        selectedPermissions.includes(getPermissionId(permission))
+      )
+    );
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+
+    setError('');
+    setSuccess('');
+
+    if (permissionsLoading) {
+      setError('Please wait while your permissions are loading.');
+      return;
+    }
+
+    if (permissionsError) {
+      setError('Your permissions could not be loaded. Please try again.');
+      return;
+    }
+
+    if (form.password !== form.confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    if (form.password.length < 8) {
+      setError('Password must contain at least 8 characters.');
+      return;
+    }
+
+    if (!form.groupType) {
+      setError('Please select a group type.');
+      return;
+    }
+
+    if (
+      !form.fullName.trim() ||
+      !form.email.trim() ||
+      !form.groupName.trim()
+    ) {
+      setError('Please complete all required fields.');
+      return;
+    }
+
+    if (!permissions.some(
+      (permission) => permission.name === 'assign_permissions'
+    )) {
+      setError(
+        'You do not have permission to assign permissions. Contact your super administrator.'
+      );
+      return;
+    }
+
+    const groupPayload = {
+      fullName: form.fullName.trim(),
+      email: form.email.trim(),
+      phoneNumber: form.phoneNumber.trim(),
+      password: form.password,
+      confirmPassword: form.confirmPassword,
+      role: form.role,
+
+      groupName: form.groupName.trim(),
+      type: form.groupType,
+      location: form.location.trim(),
+      description: form.description.trim(),
+    };
 
     try {
-      const response = await fetch(
-        `${API_BASE}/api/user-groups/group/${group.id}/members`,
+      setSubmitting(true);
+
+      // STEP 1: Create the group and its leader.
+      const createResponse = await fetch(
+        `${API_BASE}/api/groups/with-leader`,
         {
-          method: 'GET',
+          method: 'POST',
           credentials: 'include',
-          headers: { Accept: 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(groupPayload),
         }
       );
 
-      const data = await response.json().catch(() => ({}));
+      const createdData = await readResponse(createResponse);
 
-      if (!response.ok) {
+      const createdUser =
+        createdData.user ||
+        createdData.data?.user;
+
+      if (!createdUser?.id) {
         throw new Error(
-          data.message || data.error || 'Failed to load fellowship members.'
+          'The group creation response did not contain the new user ID. Check your createWithLeader controller response.'
         );
       }
 
-      setMembers(getArray(data));
+      // STEP 2: Assign selected permissions to the newly created user.
+      if (selectedPermissions.length > 0) {
+        const assignResponse = await fetch(
+          `${API_BASE}/api/permissions/assign`,
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+            },
+            body: JSON.stringify({
+              userId: createdUser.id,
+              permissionIds: selectedPermissions,
+            }),
+          }
+        );
+
+        await readResponse(assignResponse);
+      }
+
+      setSuccess(
+        selectedPermissions.length > 0
+          ? 'Group, leader and permissions created successfully.'
+          : 'Group and leader created successfully. No additional permissions were selected.'
+      );
+
+      // Notify the parent component after successful API requests.
+      if (onSubmit) {
+        await onSubmit({
+          user: createdUser,
+          group: createdData.group || createdData.data?.group,
+          permissions: selectedPermissions,
+        });
+      }
     } catch (err) {
-      setMembersError(
-        err.message || 'Unable to load members for this fellowship.'
+      setError(
+        err.message ||
+          'Something went wrong while creating the group and leader.'
       );
     } finally {
-      setMembersLoading(false);
+      setSubmitting(false);
     }
   }
 
-  function closeFellowship() {
-    setSelectedFellowship(null);
-    setMembers([]);
-    setMembersError('');
-  }
+  const inputStyle = {
+    width: '100%',
+    padding: '11px 12px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '7px',
+    fontSize: '14px',
+    boxSizing: 'border-box',
+    background: '#fff',
+  };
+
+  const labelStyle = {
+    display: 'block',
+    marginBottom: '7px',
+    fontSize: '13px',
+    fontWeight: 600,
+    color: '#334155',
+  };
+
+  const fieldStyle = {
+    marginBottom: '17px',
+  };
 
   return (
-    <div className="administration-section-page">
-      <header className="administration-page-header">
-        <div>
-          <p className="administration-eyebrow">Administration</p>
-          <h1 className="administration-title">
-            {selectedFellowship ? selectedFellowship.name : 'Fellowship'}
-          </h1>
-          <p style={{ color: '#64748b', marginTop: '8px' }}>
-            {selectedFellowship
-              ? 'Fellowship overview and membership directory'
-              : 'View and manage registered fellowships'}
-          </p>
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 1000,
+        background: 'rgba(15, 23, 42, 0.65)',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: '20px',
+        overflowY: 'auto',
+      }}
+    >
+      <div
+        style={{
+          background: '#fff',
+          width: '100%',
+          maxWidth: '850px',
+          maxHeight: '92vh',
+          overflowY: 'auto',
+          borderRadius: '12px',
+          padding: '28px',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+        }}
+      >
+        {/* HEADER */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '24px',
+          }}
+        >
+          <div>
+            <p style={{ color: '#64748b', margin: '0 0 6px' }}>
+              Administration
+            </p>
+
+            <h2 style={{ margin: 0, color: '#0f172a' }}>
+              Create Group & Leader
+            </h2>
+
+            <p style={{ color: '#64748b', fontSize: '14px' }}>
+              Create a group, register its leader and assign permissions.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            style={{
+              border: 'none',
+              background: '#f1f5f9',
+              borderRadius: '7px',
+              padding: '9px 13px',
+              cursor: 'pointer',
+              fontSize: '18px',
+            }}
+          >
+            ×
+          </button>
         </div>
 
-        {!selectedFellowship && (
-          <div className="fellowship-member-search">
-            <SearchBar
-              placeholder="Search fellowship"
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
+        <form onSubmit={handleSubmit}>
+          {/* LEADER INFORMATION */}
+          <h3>1. Leader information</h3>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+              gap: '16px',
+            }}
+          >
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Full name *</label>
+
+              <input
+                style={inputStyle}
+                name="fullName"
+                value={form.fullName}
+                onChange={handleChange}
+                placeholder="Enter full name"
+                required
+              />
+            </div>
+
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Email address *</label>
+
+              <input
+                style={inputStyle}
+                type="email"
+                name="email"
+                value={form.email}
+                onChange={handleChange}
+                placeholder="Enter email address"
+                required
+              />
+            </div>
+
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Phone number</label>
+
+              <input
+                style={inputStyle}
+                name="phoneNumber"
+                value={form.phoneNumber}
+                onChange={handleChange}
+                placeholder="Enter phone number"
+              />
+            </div>
+
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Leader role *</label>
+
+              <select
+                style={inputStyle}
+                name="role"
+                value={form.role}
+                onChange={handleChange}
+                required
+              >
+                {leaderRoles.map((role) => (
+                  <option key={role} value={role}>
+                    {role.replaceAll('_', ' ')}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Password *</label>
+
+              <input
+                style={inputStyle}
+                type="password"
+                name="password"
+                value={form.password}
+                onChange={handleChange}
+                placeholder="Create password"
+                minLength={8}
+                required
+              />
+            </div>
+
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Confirm password *</label>
+
+              <input
+                style={inputStyle}
+                type="password"
+                name="confirmPassword"
+                value={form.confirmPassword}
+                onChange={handleChange}
+                placeholder="Confirm password"
+                minLength={8}
+                required
+              />
+            </div>
+          </div>
+
+          <hr
+            style={{
+              border: 0,
+              borderTop: '1px solid #e2e8f0',
+              margin: '22px 0',
+            }}
+          />
+
+          {/* GROUP INFORMATION */}
+          <h3>2. Group information</h3>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+              gap: '16px',
+            }}
+          >
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Group name *</label>
+
+              <input
+                style={inputStyle}
+                name="groupName"
+                value={form.groupName}
+                onChange={handleChange}
+                placeholder="Enter group name"
+                required
+              />
+            </div>
+
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Group type *</label>
+
+              <select
+                style={inputStyle}
+                name="groupType"
+                value={form.groupType}
+                onChange={handleChange}
+                required
+              >
+                <option value="">Select group type</option>
+
+                {groupTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Location</label>
+
+              <input
+                style={inputStyle}
+                name="location"
+                value={form.location}
+                onChange={handleChange}
+                placeholder="Enter group location"
+              />
+            </div>
+          </div>
+
+          <div style={fieldStyle}>
+            <label style={labelStyle}>Group description</label>
+
+            <textarea
+              style={{
+                ...inputStyle,
+                minHeight: '90px',
+                resize: 'vertical',
+              }}
+              name="description"
+              value={form.description}
+              onChange={handleChange}
+              placeholder="Describe the group"
             />
           </div>
-        )}
-      </header>
 
-      {selectedFellowship ? (
-        <section className="fellowship-member-panel">
-          <div className="fellowship-member-panel-header">
-            <h2>Fellowship details</h2>
-            <button type="button" onClick={closeFellowship}>
-              Back to fellowships
-            </button>
-          </div>
+          <hr
+            style={{
+              border: 0,
+              borderTop: '1px solid #e2e8f0',
+              margin: '22px 0',
+            }}
+          />
 
-          <section className="administration-stats">
-            <article className="administration-card">
-              <p className="administration-card-label">Fellowship</p>
-              <p className="administration-card-value">
-                {selectedFellowship.name || 'Unnamed'}
-              </p>
-              <p className="administration-card-detail">
-                Registered fellowship
-              </p>
-            </article>
+          {/* PERMISSIONS */}
+          <h3>3. Assign permissions</h3>
 
-            <article className="administration-card">
-              <p className="administration-card-label">Leader</p>
-              <p className="administration-card-value">
-                {getLeaderName(selectedFellowship)}
-              </p>
-              <p className="administration-card-detail">
-                Fellowship leadership
-              </p>
-            </article>
+          <p style={{ fontSize: '13px', color: '#64748b' }}>
+            These are the permissions assigned to your administrator
+            account. You can delegate the permissions you have been
+            granted.
+          </p>
 
-            <article className="administration-card">
-              <p className="administration-card-label">Members</p>
-              <p className="administration-card-value">
-                {membersLoading ? '...' : members.length}
-              </p>
-              <p className="administration-card-detail">
-                Members returned by the API
-              </p>
-            </article>
-          </section>
-
-          <div style={{ margin: '20px 0' }}>
-            <p>
-              <strong>Location:</strong>{' '}
-              {selectedFellowship.location || 'Not specified'}
+          {permissionsLoading ? (
+            <p>Loading your available permissions...</p>
+          ) : permissionsError ? (
+            <p style={{ color: '#b91c1c' }}>
+              {permissionsError}
             </p>
-            <p>
-              <strong>Description:</strong>{' '}
-              {selectedFellowship.description || 'No description provided'}
-            </p>
-            <p>
-              <strong>Leader status:</strong>{' '}
-              {selectedFellowship.leader_id ||
-              selectedFellowship.leader_name ||
-              selectedFellowship.leader_full_name ||
-              selectedFellowship.leader
-                ? 'Leader assigned'
-                : 'No leader assigned'}
-            </p>
-          </div>
-
-          <div className="fellowship-member-panel-header">
-            <h2>Fellowship members</h2>
-            <span>
-              {membersLoading ? 'Loading...' : `${members.length} members`}
-            </span>
-          </div>
-
-          {membersLoading ? (
-            <p style={{ color: '#64748b', padding: '16px 0' }}>
-              Loading fellowship members...
-            </p>
-          ) : membersError ? (
-            <div style={{ color: '#b91c1c', padding: '16px 0' }}>
-              <p>{membersError}</p>
-              <button
-                type="button"
-                onClick={() => openFellowship(selectedFellowship)}
-              >
-                Try again
-              </button>
-            </div>
-          ) : members.length === 0 ? (
-            <p style={{ color: '#64748b', padding: '16px 0' }}>
-              No members were found for this fellowship.
+          ) : permissions.length === 0 ? (
+            <p style={{ color: '#64748b' }}>
+              No permissions were returned for your account.
             </p>
           ) : (
-            <div style={tableStyles.wrapper}>
-              <table style={tableStyles.table}>
-                <thead>
-                  <tr>
-                    <th style={{ ...tableStyles.headerCell, width: '60px' }}>
-                      No.
-                    </th>
-                    <th style={tableStyles.headerCell}>Member ID</th>
-                    <th style={tableStyles.headerCell}>Full name</th>
-                    <th style={tableStyles.headerCell}>Email address</th>
-                    <th style={tableStyles.headerCell}>Phone number</th>
-                    <th style={tableStyles.headerCell}>Role</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {members.map((member, index) => (
-                    <tr
-                      key={getMemberId(member) ?? `member-${index}`}
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '22px',
+                marginTop: '18px',
+              }}
+            >
+              {permissionCategories.map((category) => {
+                const allSelected = isCategorySelected(
+                  category.permissions
+                );
+
+                return (
+                  <section key={category.id}>
+                    <div
                       style={{
-                        backgroundColor: index % 2 === 0 ? '#ffffff' : '#f8fafc',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        borderBottom: '1px solid #e2e8f0',
+                        paddingBottom: '9px',
+                        marginBottom: '12px',
                       }}
                     >
-                      <td style={{ ...tableStyles.cell, textAlign: 'center' }}>
-                        {index + 1}
-                      </td>
-                      <td style={tableStyles.cell}>
-                        {getMemberId(member) ?? '—'}
-                      </td>
-                      <td style={{ ...tableStyles.cell, fontWeight: 600 }}>
-                        {getMemberName(member)}
-                      </td>
-                      <td style={tableStyles.cell}>
-                        {getMemberEmail(member)}
-                      </td>
-                      <td style={tableStyles.cell}>
-                        {getMemberPhone(member)}
-                      </td>
-                      <td style={tableStyles.cell}>{getMemberRole(member)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      ) : (
-        <>
-          <section
-            className="administration-stats"
-            aria-label="Fellowship statistics"
-          >
-            <article className="administration-card fellowship-summary-card">
-              <p className="administration-card-label">Total fellowships</p>
-              <p className="administration-card-value">
-                {loading ? '...' : fellowships.length}
-              </p>
-              <p className="administration-card-detail">
-                Registered fellowships
-              </p>
-            </article>
-
-            <article className="administration-card fellowship-summary-card">
-              <p className="administration-card-label">Assigned leaders</p>
-              <p className="administration-card-value">
-                {loading ? '...' : assignedLeaders}
-              </p>
-              <p className="administration-card-detail">
-                Fellowships with a leader assigned
-              </p>
-            </article>
-
-            <article className="administration-card fellowship-summary-card">
-              <p className="administration-card-label">Total members</p>
-              <p className="administration-card-value">
-                {loading ? '...' : totalMembers}
-              </p>
-              <p className="administration-card-detail">
-                Memberships across fellowships
-              </p>
-            </article>
-          </section>
-
-          <section
-            className="fellowship-member-panel"
-            aria-label="Fellowship list"
-          >
-            <div className="fellowship-member-panel-header">
-              <h2>Fellowship directory</h2>
-              <span>
-                {loading ? 'Loading...' : `${filteredFellowships.length} total`}
-              </span>
-            </div>
-
-            {loading ? (
-              <p style={{ color: '#64748b', padding: '16px 0' }}>
-                Loading fellowships from the database...
-              </p>
-            ) : error ? (
-              <div style={{ color: '#b91c1c', padding: '16px 0' }}>
-                <p>{error}</p>
-                <button
-                  type="button"
-                  onClick={() => window.location.reload()}
-                >
-                  Try again
-                </button>
-              </div>
-            ) : filteredFellowships.length === 0 ? (
-              <p style={{ color: '#64748b', padding: '16px 0' }}>
-                {searchTerm.trim()
-                  ? 'No fellowship matches your search.'
-                  : 'No fellowship groups were found.'}
-              </p>
-            ) : (
-              <div className="admin-grid-list">
-                {filteredFellowships.map((group) => (
-                  <article
-                    key={group.id}
-                    className="admin-grid-item"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => openFellowship(group)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        openFellowship(group);
-                      }
-                    }}
-                    style={{
-                      cursor: 'pointer',
-                      transition: 'transform 0.15s ease',
-                    }}
-                    aria-label={`View ${group.name || 'fellowship'} details`}
-                  >
-                    <div className="admin-grid-item-top">
-                      <div
-                        className="fellowship-member-avatar"
-                        style={{ width: '42px', height: '42px' }}
-                      >
-                        {String(group.name || 'F').charAt(0).toUpperCase()}
-                      </div>
-                      <span
-                        className="fellowship-member-status"
-                        style={{ minWidth: '88px' }}
-                      >
-                        {group.leader_id ||
-                        group.leader_name ||
-                        group.leader_full_name ||
-                        group.leader
-                          ? 'Leader assigned'
-                          : 'No leader'}
-                      </span>
-                    </div>
-
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: '1.05rem',
-                        fontWeight: 700,
-                        color: '#111827',
-                      }}
-                    >
-                      {group.name || 'Unnamed fellowship'}
-                    </p>
-
-                    <p
-                      style={{
-                        margin: 0,
-                        color: '#64748b',
-                        fontSize: '0.9rem',
-                      }}
-                    >
-                      Leader: {getLeaderName(group)}
-                    </p>
-
-                    {group.location && (
-                      <p
+                      <h4
                         style={{
                           margin: 0,
-                          color: '#64748b',
-                          fontSize: '0.85rem',
+                          color: '#0f172a',
+                          fontSize: '15px',
+                          fontWeight: 700,
                         }}
                       >
-                        Location: {group.location}
-                      </p>
-                    )}
+                        {category.name}
+                      </h4>
 
-                    <div className="admin-grid-item-body">
-                      <span style={{ color: '#64748b', fontSize: '0.8rem' }}>
-                        Members
-                      </span>
-                      <strong
+                      <button
+                        type="button"
+                        onClick={() =>
+                          toggleCategory(category.permissions)
+                        }
                         style={{
-                          color: '#111827',
-                          fontSize: '1.1rem',
+                          border: 'none',
+                          background: 'transparent',
+                          color: '#1d4ed8',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
                         }}
                       >
-                        {group.memberCountUnavailable
-                          ? 'Unavailable'
-                          : group.memberCount}
-                      </strong>
+                        {allSelected ? 'Deselect All' : 'Select All'}
+                      </button>
                     </div>
 
-                    <p
+                    <div
                       style={{
-                        margin: '12px 0 0',
-                        color: '#2563eb',
-                        fontWeight: 600,
-                        fontSize: '0.9rem',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '11px',
+                        paddingLeft: '5px',
                       }}
                     >
-                      View fellowship →
-                    </p>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
-        </>
-      )}
+                      {category.permissions.map((permission) => {
+                        const id = getPermissionId(permission);
+                        const name = getPermissionName(permission);
+
+                        return (
+                          <label
+                            key={id}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'flex-start',
+                              gap: '10px',
+                              cursor: 'pointer',
+                              fontSize: '13px',
+                              color: '#334155',
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedPermissions.includes(id)}
+                              onChange={() => togglePermission(id)}
+                              style={{
+                                marginTop: '3px',
+                                cursor: 'pointer',
+                              }}
+                            />
+
+                            <span>
+                              <span style={{ display: 'block' }}>
+                                {name.replaceAll('_', ' ')}
+                              </span>
+
+                              {permission.description && (
+                                <small
+                                  style={{
+                                    display: 'block',
+                                    color: '#64748b',
+                                    marginTop: '3px',
+                                  }}
+                                >
+                                  {permission.description}
+                                </small>
+                              )}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          )}
+
+          {error && (
+            <p style={{ color: '#b91c1c', marginTop: '16px' }}>
+              {error}
+            </p>
+          )}
+
+          {success && (
+            <p style={{ color: '#15803d', marginTop: '16px' }}>
+              {success}
+            </p>
+          )}
+
+          {/* ACTIONS */}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '12px',
+              marginTop: '26px',
+            }}
+          >
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={submitting}
+              style={{
+                padding: '11px 20px',
+                border: '1px solid #cbd5e1',
+                background: '#fff',
+                borderRadius: '7px',
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+
+            <button
+              type="submit"
+              disabled={
+                submitting ||
+                permissionsLoading ||
+                Boolean(permissionsError)
+              }
+              style={{
+                padding: '11px 22px',
+                border: 'none',
+                background: '#1d4ed8',
+                color: '#fff',
+                borderRadius: '7px',
+                cursor: submitting ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {submitting ? 'Creating...' : 'Create Group & Leader'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

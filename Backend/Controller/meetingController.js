@@ -1,6 +1,6 @@
-
 const GroupsModel = require('../models/groupsModel');
 const Meeting = require('../models/meetingsModel');
+const GroupHierarchy = require('../models/groupHierarchyModel');
 
 const MAX_INT = 2147483647;
 
@@ -68,7 +68,8 @@ const isValidDate = (value) => {
   );
 };
 
-// Check whether the user can view a group's meetings and reports.
+// Check whether the user can VIEW a group's meetings and reports.
+// This includes access inherited through the group hierarchy.
 const canAccessGroup = async (req, groupId) => {
   if (!req.user || !req.user.id) {
     return false;
@@ -76,7 +77,7 @@ const canAccessGroup = async (req, groupId) => {
 
   const role = req.user.role;
 
-  // Admin and super_admin currently have the same viewing access.
+  // Admin and super_admin can view all groups.
   if (role === 'admin' || role === 'super_admin') {
     return true;
   }
@@ -87,17 +88,19 @@ const canAccessGroup = async (req, groupId) => {
     return false;
   }
 
-  // Group leader can access their own group.
-  if (String(group.leader_id) === String(req.user.id)) {
-    return true;
-  }
-
-  // Ordinary group member can view their group's meetings.
-  return await Meeting.isUserInGroup(req.user.id, groupId);
+  // Use the hierarchy model to check:
+  // - Direct group membership.
+  // - Group leadership.
+  // - Access inherited from parent groups.
+  // - Access to descendant groups.
+  return await GroupHierarchy.canViewGroup(
+    req.user,
+    Number(groupId)
+  );
 };
 
 // Only admins, super_admins and the actual group leader
-// can manage meetings.
+// can CREATE, UPDATE or DELETE meetings.
 const canManageMeetings = async (req, groupId) => {
   if (!req.user || !req.user.id) {
     return false;
@@ -119,6 +122,7 @@ const canManageMeetings = async (req, groupId) => {
 };
 
 const MeetingsController = {
+
   // Create a meeting.
   async create(req, res) {
     try {
@@ -181,7 +185,10 @@ const MeetingsController = {
         });
       }
 
-      const allowed = await canManageMeetings(req, Number(groupId));
+      const allowed = await canManageMeetings(
+        req,
+        Number(groupId)
+      );
 
       if (!allowed) {
         return res.status(403).json({
@@ -203,6 +210,7 @@ const MeetingsController = {
         message: 'Meeting created successfully.',
         meeting,
       });
+
     } catch (error) {
       console.error('Create meeting error:', error);
 
@@ -249,7 +257,10 @@ const MeetingsController = {
         });
       }
 
-      const allowed = await canAccessGroup(req, Number(groupId));
+      const allowed = await canAccessGroup(
+        req,
+        Number(groupId)
+      );
 
       if (!allowed) {
         return res.status(403).json({
@@ -257,14 +268,18 @@ const MeetingsController = {
         });
       }
 
-      const meetings = await Meeting.findByGroup(Number(groupId), {
-        from,
-        to,
-      });
+      const meetings = await Meeting.findByGroup(
+        Number(groupId),
+        {
+          from,
+          to,
+        }
+      );
 
       return res.status(200).json({
         meetings,
       });
+
     } catch (error) {
       console.error('Find meetings by group error:', error);
 
@@ -293,7 +308,10 @@ const MeetingsController = {
         });
       }
 
-      const allowed = await canAccessGroup(req, meeting.group_id);
+      const allowed = await canAccessGroup(
+        req,
+        meeting.group_id
+      );
 
       if (!allowed) {
         return res.status(403).json({
@@ -304,6 +322,7 @@ const MeetingsController = {
       return res.status(200).json({
         meeting,
       });
+
     } catch (error) {
       console.error('Find meeting error:', error);
 
@@ -332,7 +351,10 @@ const MeetingsController = {
         });
       }
 
-      const allowed = await canManageMeetings(req, meeting.group_id);
+      const allowed = await canManageMeetings(
+        req,
+        meeting.group_id
+      );
 
       if (!allowed) {
         return res.status(403).json({
@@ -399,7 +421,9 @@ const MeetingsController = {
       const updatedMeeting = await Meeting.update(Number(id), {
         title: title !== undefined ? title.trim() : undefined,
         description:
-          description !== undefined ? description.trim() : undefined,
+          description !== undefined
+            ? description.trim()
+            : undefined,
         startDate,
         endDate,
         location,
@@ -409,6 +433,7 @@ const MeetingsController = {
         message: 'Meeting updated successfully.',
         meeting: updatedMeeting,
       });
+
     } catch (error) {
       console.error('Update meeting error:', error);
 
@@ -437,7 +462,10 @@ const MeetingsController = {
         });
       }
 
-      const allowed = await canManageMeetings(req, meeting.group_id);
+      const allowed = await canManageMeetings(
+        req,
+        meeting.group_id
+      );
 
       if (!allowed) {
         return res.status(403).json({
@@ -450,6 +478,7 @@ const MeetingsController = {
       return res.status(200).json({
         message: 'Meeting deleted successfully.',
       });
+
     } catch (error) {
       console.error('Delete meeting error:', error);
 

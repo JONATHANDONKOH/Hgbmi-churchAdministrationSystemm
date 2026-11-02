@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import '../../styles/administrationManagement.css';
@@ -7,20 +6,18 @@ const API_BASE = (
   import.meta.env.VITE_API_URL || 'http://localhost:5000'
 ).replace(/\/+$/, '');
 
-const ALLOWED_ROLE = 'fellowship_leader';
-
 const reportCategories = [
   {
     title: 'Fellowship Reports',
     type: 'fellowship',
     label: 'Fellowship',
-    description: 'View your fellowships and their child fellowships.',
+    description: 'View your fellowships and their reports.',
   },
   {
     title: 'Cell Reports',
     type: 'cell',
     label: 'Cell',
-    description: 'View cells under your fellowship hierarchy.',
+    description: 'View your cells and their reports.',
   },
 ];
 
@@ -57,75 +54,16 @@ function getGroupId(group) {
   return group?.id ?? group?.group_id ?? group?._id;
 }
 
-function getParentId(group) {
-  return group?.parent_group_id ?? group?.parent_id ?? null;
-}
-
 function getGroupType(group) {
   return String(group?.type || '').toLowerCase();
 }
 
-function getUserRole(user) {
-  return String(user?.role || '').toLowerCase();
-}
-
-// Find the fellowships created by the logged-in user.
-// Then recursively collect every child group.
-function getUserFellowshipHierarchy(allGroups, userId) {
-  const rootFellowships = allGroups.filter(
-    (group) =>
-      getGroupType(group) === 'fellowship' &&
-      String(group.created_by) === String(userId)
-  );
-
-  const childrenMap = new Map();
-
-  allGroups.forEach((group) => {
-    const parentId = getParentId(group);
-
-    if (parentId == null) return;
-
-    const parentKey = String(parentId);
-
-    if (!childrenMap.has(parentKey)) {
-      childrenMap.set(parentKey, []);
-    }
-
-    childrenMap.get(parentKey).push(group);
-  });
-
-  const hierarchy = [];
-  const visited = new Set();
-  const queue = [...rootFellowships];
-
-  while (queue.length > 0) {
-    const currentGroup = queue.shift();
-    const currentId = getGroupId(currentGroup);
-
-    if (currentId == null) continue;
-
-    const currentKey = String(currentId);
-
-    if (visited.has(currentKey)) continue;
-
-    visited.add(currentKey);
-    hierarchy.push(currentGroup);
-
-    const children = childrenMap.get(currentKey) || [];
-
-    children.forEach((child) => {
-      queue.push(child);
-    });
-  }
-
-  return hierarchy;
-}
-
-export default function FellowshipAdministrationReports() {
+export default function FellowshipReports() {
   const navigate = useNavigate();
 
   const [selectedType, setSelectedType] = useState(null);
   const [groups, setGroups] = useState([]);
+  const [userId, setUserId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -135,23 +73,23 @@ export default function FellowshipAdministrationReports() {
     (category) => category.type === selectedType
   );
 
+  // Only show groups created by the logged-in user
+  // and belonging to the selected category.
   const visibleGroups = groups.filter(
-    (group) => getGroupType(group) === selectedType
+    (group) =>
+      getGroupType(group) === selectedType &&
+      String(group.created_by) === String(userId)
   );
 
+  // Search groups using their own details and parent group name.
   const filteredGroups = visibleGroups.filter((group) => {
     const query = searchTerm.trim().toLowerCase();
-
-    const parent = groups.find(
-      (item) =>
-        String(getGroupId(item)) === String(getParentId(group))
-    );
 
     const searchableText = [
       group.name,
       group.location,
       group.description,
-      parent?.name,
+      group.parent_group_name,
     ]
       .filter(Boolean)
       .join(' ')
@@ -169,9 +107,10 @@ export default function FellowshipAdministrationReports() {
       setLoading(true);
       setError('');
       setGroups([]);
+      setUserId(null);
 
       try {
-        // 1. Get the logged-in user.
+        // 1. Identify the logged-in user.
         const userResponse = await fetch(
           `${API_BASE}/api/auth/me`,
           {
@@ -196,23 +135,14 @@ export default function FellowshipAdministrationReports() {
 
         const user = getLoggedInUser(userData);
 
-        // 2. Check the user's role.
-        const userRole = getUserRole(user);
-
-        if (userRole !== ALLOWED_ROLE) {
-          throw new Error(
-            'Access denied. Only fellowship leaders can view these reports.'
-          );
-        }
-
-        const userId =
+        const currentUserId =
           user?.id ?? user?.user_id ?? user?._id;
 
-        if (userId == null) {
+        if (currentUserId == null) {
           throw new Error('Logged-in user ID was not found.');
         }
 
-        // 3. Fetch all groups.
+        // 2. Fetch groups accessible to the logged-in user.
         const groupsResponse = await fetch(
           `${API_BASE}/api/groups`,
           {
@@ -237,15 +167,15 @@ export default function FellowshipAdministrationReports() {
 
         const allGroups = getGroups(groupsData);
 
-        // 4. Find the user's fellowship hierarchy.
-        const userHierarchy = getUserFellowshipHierarchy(
-          allGroups,
-          userId
-        );
-
+        // 3. Keep all accessible groups.
+        // This is necessary because parent groups might have
+        // been created by another administrator.
+        // Ownership filtering happens separately in visibleGroups.
         if (!controller.signal.aborted) {
-          setGroups(userHierarchy);
+          setUserId(currentUserId);
+          setGroups(allGroups);
         }
+
       } catch (err) {
         if (
           err.name !== 'AbortError' &&
@@ -274,15 +204,9 @@ export default function FellowshipAdministrationReports() {
   function closeModal() {
     setSelectedType(null);
     setGroups([]);
+    setUserId(null);
     setError('');
     setSearchTerm('');
-  }
-
-  function getParentGroup(group) {
-    return groups.find(
-      (item) =>
-        String(getGroupId(item)) === String(getParentId(group))
-    );
   }
 
   function openGroupReport(group) {
@@ -294,7 +218,7 @@ export default function FellowshipAdministrationReports() {
     }
 
     navigate(
-      `/administration-management/reports/group/${encodeURIComponent(
+      `/fellowshipManagementDashboard/reports/group/${encodeURIComponent(
         groupId
       )}`,
       {
@@ -305,10 +229,12 @@ export default function FellowshipAdministrationReports() {
 
   return (
     <div className="administration-section-page">
+
+      {/* PAGE HEADER */}
       <header className="administration-page-header">
         <div>
           <p className="administration-eyebrow">
-            Fellowship Administration
+            Fellowship Management
           </p>
 
           <h1 className="administration-title">
@@ -316,7 +242,7 @@ export default function FellowshipAdministrationReports() {
           </h1>
 
           <p style={{ color: '#64748b', marginTop: '8px' }}>
-            Select a group category, then open a group's report.
+            Select a group category to view its reports.
           </p>
         </div>
       </header>
@@ -418,6 +344,7 @@ export default function FellowshipAdministrationReports() {
               color: '#111827',
             }}
           >
+
             {/* MODAL HEADER */}
             <div
               style={{
@@ -441,7 +368,10 @@ export default function FellowshipAdministrationReports() {
                 </p>
               </div>
 
-              <button type="button" onClick={closeModal}>
+              <button
+                type="button"
+                onClick={closeModal}
+              >
                 Close
               </button>
             </div>
@@ -450,7 +380,7 @@ export default function FellowshipAdministrationReports() {
             {!loading && !error && visibleGroups.length > 0 && (
               <input
                 type="search"
-                placeholder="Search by group name or location..."
+                placeholder="Search by group name, parent group or location..."
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
                 style={{
@@ -470,7 +400,9 @@ export default function FellowshipAdministrationReports() {
             {/* ERROR */}
             {!loading && error && (
               <div>
-                <p style={{ color: '#dc2626' }}>{error}</p>
+                <p style={{ color: '#dc2626' }}>
+                  {error}
+                </p>
 
                 <button
                   type="button"
@@ -484,8 +416,7 @@ export default function FellowshipAdministrationReports() {
             {/* EMPTY GROUPS */}
             {!loading && !error && visibleGroups.length === 0 && (
               <p style={{ color: '#64748b' }}>
-                No {selectedCategory.label.toLowerCase()} groups found
-                in your fellowship hierarchy.
+                No {selectedCategory.label.toLowerCase()} groups created by this user were found.
               </p>
             )}
 
@@ -534,56 +465,54 @@ export default function FellowshipAdministrationReports() {
                   </thead>
 
                   <tbody>
-                    {filteredGroups.map((group) => {
-                      const parent = getParentGroup(group);
+                    {filteredGroups.map((group) => (
+                      <tr key={getGroupId(group)}>
+                        <td style={bodyCellStyle}>
+                          <strong>
+                            {group.name || 'Unnamed group'}
+                          </strong>
+                        </td>
 
-                      return (
-                        <tr key={getGroupId(group)}>
-                          <td style={bodyCellStyle}>
-                            <strong>
-                              {group.name || 'Unnamed group'}
-                            </strong>
-                          </td>
+                        <td style={bodyCellStyle}>
+                          {group.parent_group_name || 'No parent group'}
+                        </td>
 
-                          <td style={bodyCellStyle}>
-                            {parent?.name || 'Root fellowship'}
-                          </td>
+                        <td style={bodyCellStyle}>
+                          {group.location || '—'}
+                        </td>
 
-                          <td style={bodyCellStyle}>
-                            {group.location || '—'}
-                          </td>
+                        <td style={bodyCellStyle}>
+                          {group.description || '—'}
+                        </td>
 
-                          <td style={bodyCellStyle}>
-                            {group.description || '—'}
-                          </td>
-
-                          <td style={bodyCellStyle}>
-                            <button
-                              type="button"
-                              onClick={() => openGroupReport(group)}
-                              style={{
-                                padding: '8px 12px',
-                                border: 'none',
-                                borderRadius: '7px',
-                                background: '#111827',
-                                color: '#ffffff',
-                                cursor: 'pointer',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              View report
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                        <td style={bodyCellStyle}>
+                          <button
+                            type="button"
+                            onClick={() => openGroupReport(group)}
+                            style={{
+                              padding: '8px 12px',
+                              border: 'none',
+                              borderRadius: '7px',
+                              background: '#111827',
+                              color: '#ffffff',
+                              cursor: 'pointer',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            View report
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
             )}
+
           </section>
         </div>
       )}
+
     </div>
   );
 }

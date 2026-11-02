@@ -1,6 +1,7 @@
 
 const pool = require('../Config/db');
 const jwt = require('jsonwebtoken');
+const GroupHierarchy = require('../models/groupHierarchyModel');
 
 const MAX_INT = 2147483647;
 const ALLOWED_STATUSES = ['present', 'absent', 'late', 'excused'];
@@ -42,7 +43,7 @@ const isValidDate = (value) => {
 };
 
 // Administrators can manage attendance.
-// Other users must be the assigned leader of the group.
+// Other users must be the assigned leader of the exact group.
 async function canManageGroup(user, groupId, db = pool) {
   if (!user || !toId(user.id)) {
     return false;
@@ -175,6 +176,7 @@ const AttendanceController = {
   },
 
   // GET /api/attendance/sessions/:groupId
+  // Viewing uses group hierarchy, not exact-group management access.
   async getGroupSessions(req, res) {
     try {
       const groupId = toId(req.params.groupId);
@@ -185,7 +187,7 @@ const AttendanceController = {
         });
       }
 
-      if (!(await canManageGroup(req.user, groupId))) {
+      if (!(await GroupHierarchy.canViewGroup(req.user, groupId))) {
         return res.status(403).json({
           error: 'You are not authorized to view this group attendance',
         });
@@ -235,6 +237,7 @@ const AttendanceController = {
   },
 
   // GET /api/attendance/sessions/:sessionId/members
+  // Viewing uses the session's group hierarchy.
   async getSessionMembers(req, res) {
     try {
       const sessionId = toId(req.params.sessionId);
@@ -253,7 +256,7 @@ const AttendanceController = {
         });
       }
 
-      if (!(await canManageGroup(req.user, session.group_id))) {
+      if (!(await GroupHierarchy.canViewGroup(req.user, session.group_id))) {
         return res.status(403).json({
           error: 'You are not authorized to view this attendance session',
         });

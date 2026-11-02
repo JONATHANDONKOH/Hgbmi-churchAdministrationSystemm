@@ -22,12 +22,14 @@ import SuperAdminMessages from './Pages/superAdmin/messages.jsx';
 // Layouts
 import FellowshipLayout from './component/fellowshipLayout.jsx';
 import CellLayout from './component/cellLayout.jsx';
+import DepartmentLayout from './component/departmentLayout.jsx';
 import AdministrationManagementLayout from './component/administrationManagementLayout.jsx';
 
 // Navigation
 import {
   fellowshipNavigation,
   cellNavigation,
+  departmentNavigation,
   administrationManagementNavigation,
 } from './Config/navigation.js';
 
@@ -50,6 +52,14 @@ import CellReports from './Pages/cellManagementDashboard/cellReports.jsx';
 import CellEvents from './Pages/cellManagementDashboard/cellEvent.jsx';
 import CellMessages from './Pages/cellManagementDashboard/cellMessage.jsx';
 import CellAttendance from './Pages/cellManagementDashboard/cellAttendance.jsx';
+
+// Department pages
+import DepartmentAttendance from './Pages/departmentManagementDashboard/attendance.jsx';
+import DepartmentEvents from './Pages/departmentManagementDashboard/events.jsx';
+import DepartmentMeetings from './Pages/departmentManagementDashboard/meetings.jsx';
+import DepartmentMembers from './Pages/departmentManagementDashboard/members.jsx';
+import DepartmentMessages from './Pages/departmentManagementDashboard/messages.jsx';
+import DepartmentReports from './Pages/departmentManagementDashboard/reports.jsx';
 
 // Administration pages
 import AdministrationManagementDashboard from './Pages/administrationManagement/administrationManagementDashboard.jsx';
@@ -154,7 +164,6 @@ function AppRoutes() {
           element={<SuperAdminReports />}
         />
 
-        {/* Group report for Super Admin */}
         <Route
           path="reports/group/:groupId"
           element={<GroupsReport />}
@@ -209,6 +218,11 @@ function AppRoutes() {
         />
 
         <Route
+          path="reports/group/:groupId"
+          element={<GroupsReport />}
+        />
+
+        <Route
           path="messages"
           element={<FellowshipMessages />}
         />
@@ -260,6 +274,80 @@ function AppRoutes() {
         />
       </Route>
 
+      {/* Department Management */}
+      <Route
+        path="/departmentManagementDashboard"
+        element={
+          <DepartmentLayout navigation={departmentNavigation}>
+            <DashboardPlaceholder title="Department Dashboard" />
+          </DepartmentLayout>
+        }
+      />
+
+      <Route
+        path="/departmentManagementDashboard/members"
+        element={
+          <DepartmentLayout navigation={departmentNavigation}>
+            <DepartmentMembers />
+          </DepartmentLayout>
+        }
+      />
+
+      <Route
+        path="/departmentManagementDashboard/meetings"
+        element={
+          <DepartmentLayout navigation={departmentNavigation}>
+            <DepartmentMeetings />
+          </DepartmentLayout>
+        }
+      />
+
+      <Route
+        path="/departmentManagementDashboard/events"
+        element={
+          <DepartmentLayout navigation={departmentNavigation}>
+            <DepartmentEvents />
+          </DepartmentLayout>
+        }
+      />
+
+      <Route
+        path="/departmentManagementDashboard/reports"
+        element={
+          <DepartmentLayout navigation={departmentNavigation}>
+            <DepartmentReports />
+          </DepartmentLayout>
+        }
+      />
+
+      <Route
+        path="/departmentManagementDashboard/messaging"
+        element={
+          <DepartmentLayout navigation={departmentNavigation}>
+            <DepartmentMessages />
+          </DepartmentLayout>
+        }
+      />
+
+      <Route
+        path="/departmentManagementDashboard/attendance"
+        element={
+          <DepartmentLayout navigation={departmentNavigation}>
+            <DepartmentAttendance />
+          </DepartmentLayout>
+        }
+      />
+
+      {/* Department Leaders placeholder */}
+      <Route
+        path="/departmentManagementDashboard/leaders"
+        element={
+          <DepartmentLayout navigation={departmentNavigation}>
+            <DashboardPlaceholder title="Department Leaders" />
+          </DepartmentLayout>
+        }
+      />
+
       {/* Administration Management */}
       <Route
         path="/administration-management"
@@ -304,7 +392,6 @@ function AppRoutes() {
           element={<AdministrationReports />}
         />
 
-        {/* Group report for Administration */}
         <Route
           path="reports/group/:groupId"
           element={<GroupsReport />}
@@ -340,11 +427,6 @@ function AppRoutes() {
             replace
           />
         }
-      />
-
-      <Route
-        path="/departmentManagementDashboard"
-        element={<DashboardPlaceholder title="Department Dashboard" />}
       />
 
       <Route

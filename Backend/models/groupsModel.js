@@ -1,4 +1,3 @@
-
 const pool = require('../Config/db');
 
 const Group = {
@@ -25,11 +24,19 @@ const Group = {
     return rows[0];
   },
 
+  // Get all groups together with their parent group details.
   async findAll() {
     const { rows } = await pool.query(
-      `SELECT *
-       FROM groups
-       ORDER BY name`
+      `SELECT
+         child.*,
+         parent.id AS parent_id,
+         parent.name AS parent_group_name,
+         parent.type AS parent_group_type,
+         parent.location AS parent_group_location
+       FROM groups AS child
+       LEFT JOIN groups AS parent
+         ON parent.id = child.parent_group_id
+       ORDER BY child.name`
     );
 
     return rows;
@@ -46,11 +53,20 @@ const Group = {
     return rows;
   },
 
+  // Find a group together with its parent group's details.
   async findById(id, db = pool) {
     const { rows } = await db.query(
-      `SELECT *
-       FROM groups
-       WHERE id = $1`,
+      `SELECT
+         child.*,
+         parent.id AS parent_id,
+         parent.name AS parent_group_name,
+         parent.type AS parent_group_type,
+         parent.location AS parent_group_location
+       FROM groups AS child
+       LEFT JOIN groups AS parent
+         ON parent.id = child.parent_group_id
+       WHERE child.id = $1
+       LIMIT 1`,
       [id]
     );
 
@@ -59,10 +75,15 @@ const Group = {
 
   async findChildren(parentGroupId) {
     const { rows } = await pool.query(
-      `SELECT *
-       FROM groups
-       WHERE parent_group_id = $1
-       ORDER BY name`,
+      `SELECT
+         child.*,
+         parent.name AS parent_group_name,
+         parent.type AS parent_group_type
+       FROM groups AS child
+       LEFT JOIN groups AS parent
+         ON parent.id = child.parent_group_id
+       WHERE child.parent_group_id = $1
+       ORDER BY child.name`,
       [parentGroupId]
     );
 
@@ -78,10 +99,14 @@ const Group = {
          g.parent_group_id,
          g.location,
          g.description,
+         g.created_by,
+         parent.name AS parent_group_name,
          ug.group_id
        FROM user_groups AS ug
        INNER JOIN groups AS g
          ON g.id = ug.group_id
+       LEFT JOIN groups AS parent
+         ON parent.id = g.parent_group_id
        WHERE ug.user_id = $1
        ORDER BY g.name ASC`,
       [userId]

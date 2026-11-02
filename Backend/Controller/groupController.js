@@ -1,19 +1,26 @@
 
 const bcrypt = require('bcryptjs');
 const pool = require('../Config/db');
+
 const GroupsModel = require('../models/groupsModel');
 const User = require('../models/usersModel');
 const UserGroup = require('../models/userGroupScopeModel');
-const Permission = require('../models/permissionModel');
+const GroupHierarchy = require('../models/groupHierarchyModel');
 
 const MAX_INT = 2147483647;
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const ALLOWED_ROLES = ['group_leader', 'assistant_leader', 'member'];
 
-// Accepts 5 or "5". Returns a positive integer, or null if invalid.
+const ALLOWED_ROLES = [
+  'group_leader',
+  'assistant_leader',
+  'member',
+];
+
 const toId = (value) => {
   const n =
-    typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+    typeof value === 'string' && /^\d+$/.test(value)
+      ? Number(value)
+      : value;
 
   return Number.isInteger(n) && n > 0 && n <= MAX_INT ? n : null;
 };
@@ -21,24 +28,58 @@ const toId = (value) => {
 const isBlank = (value) =>
   value === undefined || value === null || value === '';
 
-const ownedNames = async (req) => {
-  if (!Array.isArray(req.user.permissions)) {
-    req.user.permissions = await Permission.findNamesByUserId(req.user.id);
+const isAdmin = (user) =>
+  user && ['super_admin', 'admin'].includes(user.role);
+
+// Get all groups visible to the authenticated user.
+// Admins and super admins can see all groups.
+const getVisibleGroupIds = async (user) => {
+  if (!user || !user.id) {
+    throw new Error('Authenticated user information is missing');
   }
 
-  return req.user.permissions;
+  if (isAdmin(user)) {
+    return null;
+  }
+
+  return GroupHierarchy.getAccessibleGroupIds(user.id);
+};
+
+// Filter groups using the user's accessible group IDs.
+const filterAccessibleGroups = (groups, accessibleIds) => {
+  if (accessibleIds === null) {
+    return groups;
+  }
+
+  const accessibleSet = new Set(
+    (accessibleIds || []).map(Number)
+  );
+
+  return groups.filter((group) =>
+    accessibleSet.has(Number(group.id))
+  );
 };
 
 const GroupsController = {
-  // POST /groups (group only, optional existing leader)
+
+  // POST /groups
+  // Create a group, optionally under an existing parent.
   async create(req, res) {
     try {
-      const { name, type, location, description, parentGroupId, leaderId } =
-        req.body;
-
       if (!req.user || !req.user.id) {
-        return res.status(401).json({ error: 'Authentication required' });
+        return res.status(401).json({
+          error: 'Authentication required',
+        });
       }
+
+      const {
+        name,
+        type,
+        location,
+        description,
+        parentGroupId,
+        leaderId,
+      } = req.body;
 
       if (!name || !type) {
         return res.status(400).json({
@@ -46,8 +87,18 @@ const GroupsController = {
         });
       }
 
+      const normalizedName = String(name).trim();
+      const normalizedType = String(type).trim().toLowerCase();
+
+      if (!normalizedName || !normalizedType) {
+        return res.status(400).json({
+          error: 'A valid group name and type are required',
+        });
+      }
+
       let normalizedParentId = null;
 
+      // Validate parent group and creator's authority.
       if (!isBlank(parentGroupId)) {
         normalizedParentId = toId(parentGroupId);
 
@@ -57,9 +108,25 @@ const GroupsController = {
           });
         }
 
-        if (!(await GroupsModel.findById(normalizedParentId))) {
+        const parentGroup = await GroupsModel.findById(
+          normalizedParentId
+        );
+
+        if (!parentGroup) {
           return res.status(404).json({
             error: 'Parent group not found',
+          });
+        }
+
+        const canCreate =
+          await GroupHierarchy.canCreateUnderParent(
+            req.user,
+            normalizedParentId
+          );
+
+        if (!canCreate) {
+          return res.status(403).json({
+            error: 'You are not authorized to create a group under this parent',
           });
         }
       }
@@ -75,7 +142,9 @@ const GroupsController = {
           });
         }
 
-        if (!(await User.findById(normalizedLeaderId))) {
+        const leader = await User.findById(normalizedLeaderId);
+
+        if (!leader) {
           return res.status(404).json({
             error: 'Leader not found',
           });
@@ -83,26 +152,29 @@ const GroupsController = {
       }
 
       const group = await GroupsModel.create({
-        name: String(name).trim(),
-        type: String(type).trim().toLowerCase(),
-        location,
-        description,
+        name: normalizedName,
+        type: normalizedType,
+        location: location || null,
+        description: description || null,
         parentGroupId: normalizedParentId,
         leaderId: normalizedLeaderId,
         createdBy: req.user.id,
       });
 
       return res.status(201).json(group);
+
     } catch (err) {
-      console.error('create group error:', err);
+      console.error('CREATE GROUP ERROR:', err);
+
       return res.status(500).json({
         error: 'Failed to create group',
       });
     }
   },
 
+
   // POST /groups/with-leader
-  // One transaction: users + groups + user_groups + user_permissions.
+  // Creates a user and their group in one transaction.
   async createWithLeader(req, res) {
     if (!req.user || !req.user.id) {
       return res.status(401).json({
@@ -122,10 +194,9 @@ const GroupsController = {
       location,
       description,
       parentGroupId,
-      permissionIds,
     } = req.body;
 
-    // Validation
+    // Validate user information.
     if (!fullName || !email || !password || !confirmPassword) {
       return res.status(400).json({
         error: 'User fields are required',
@@ -162,8 +233,15 @@ const GroupsController = {
       });
     }
 
-    // The route middleware already checked create_<type> for this type.
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedName = String(groupName).trim();
     const groupType = String(type).trim().toLowerCase();
+
+    if (!normalizedName || !groupType) {
+      return res.status(400).json({
+        error: 'A valid group name and type are required',
+      });
+    }
 
     let normalizedParentId = null;
 
@@ -177,95 +255,83 @@ const GroupsController = {
       }
     }
 
-    // permissionIds: optional list of valid IDs.
-    let ids = [];
-
-    if (permissionIds !== undefined && permissionIds !== null) {
-      if (!Array.isArray(permissionIds)) {
-        return res.status(400).json({
-          error: 'permissionIds must be an array',
-        });
-      }
-
-      ids = [...new Set(permissionIds.map(toId))];
-
-      if (ids.includes(null)) {
-        return res.status(400).json({
-          error: 'permissionIds must contain valid permission ids',
-        });
-      }
-    }
-
-    const normalizedEmail = String(email).trim().toLowerCase();
-
-    // Database checks
+    // Validate parent group and authority.
     try {
-      if (
-        normalizedParentId &&
-        !(await GroupsModel.findById(normalizedParentId))
-      ) {
-        return res.status(404).json({
-          error: 'Parent group not found',
-        });
-      }
+      if (normalizedParentId) {
+        const parentGroup = await GroupsModel.findById(
+          normalizedParentId
+        );
 
-      if (ids.length > 0) {
-        const found = await Permission.findByIds(ids);
-
-        if (found.length !== ids.length) {
-          return res.status(400).json({
-            error: 'One or more permissions do not exist',
+        if (!parentGroup) {
+          return res.status(404).json({
+            error: 'Parent group not found',
           });
         }
 
-        // Only super_admin may grant permissions they do not hold.
-        if (req.user.role !== 'super_admin') {
-          const owned = await ownedNames(req);
+        const canCreate =
+          await GroupHierarchy.canCreateUnderParent(
+            req.user,
+            normalizedParentId
+          );
 
-          if (found.some((p) => !owned.includes(p.name))) {
-            return res.status(403).json({
-              error: 'You can only assign permissions that you hold yourself',
-            });
-          }
+        if (!canCreate) {
+          return res.status(403).json({
+            error: 'You are not authorized to create a group under this parent',
+          });
         }
       }
 
-      if (await User.findByEmail(normalizedEmail)) {
+      const existingUser = await User.findByEmail(normalizedEmail);
+
+      if (existingUser) {
         return res.status(409).json({
           error: 'Email already exists',
         });
       }
+
     } catch (err) {
-      console.error('createWithLeader check error:', err);
+      console.error('CREATE WITH LEADER VALIDATION ERROR:', err);
+
       return res.status(500).json({
-        error: 'Failed to create group leader',
+        error: 'Failed to validate group creation',
       });
     }
 
-    // Hash the password before opening the transaction.
+    // Hash password before opening the transaction.
     let passwordHash;
 
     try {
       passwordHash = await bcrypt.hash(password, 10);
-    } catch (hashErr) {
-      console.error('hash error:', hashErr);
+    } catch (err) {
+      console.error('PASSWORD HASH ERROR:', err);
+
       return res.status(500).json({
         error: 'Failed to create group leader',
       });
     }
 
-    // Transaction
     const client = await pool.connect();
 
     try {
       await client.query('BEGIN');
 
-      // 1. Create user.
+      // 1. Create the new user.
       const userResult = await client.query(
-        `INSERT INTO users
-           (full_name, email, password, role, phone_number)
+        `INSERT INTO users (
+           full_name,
+           email,
+           password,
+           role,
+           phone_number
+         )
          VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, full_name, email, role, phone_number, created_at`,
+         RETURNING
+           id,
+           full_name,
+           email,
+           role,
+           phone_number,
+           created_at`,
         [
           String(fullName).trim(),
           normalizedEmail,
@@ -277,14 +343,21 @@ const GroupsController = {
 
       const user = userResult.rows[0];
 
-      // 2. Create group.
+      // 2. Create the group.
       const groupResult = await client.query(
-        `INSERT INTO groups
-           (name, type, location, description, parent_group_id, leader_id, created_by)
+        `INSERT INTO groups (
+           name,
+           type,
+           location,
+           description,
+           parent_group_id,
+           leader_id,
+           created_by
+         )
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
         [
-          String(groupName).trim(),
+          normalizedName,
           groupType,
           location || null,
           description || null,
@@ -296,23 +369,22 @@ const GroupsController = {
 
       const group = groupResult.rows[0];
 
-      // 3. Add user to group.
+      // 3. Add the new leader to their own group.
+      // Pass the transaction client to UserGroup.add.
       await UserGroup.add(user.id, group.id, client);
-
-      // 4. Assign permissions using the same transaction.
-      if (ids.length > 0) {
-        await Permission.assignToUser(user.id, ids, client);
-      }
 
       await client.query('COMMIT');
 
       return res.status(201).json({
+        message: 'User and group created successfully',
         user,
         group,
       });
+
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
-      console.error('createWithLeader error:', err);
+
+      console.error('CREATE WITH LEADER ERROR:', err);
 
       if (err.code === '23505') {
         const isEmail = String(err.constraint || '')
@@ -328,47 +400,91 @@ const GroupsController = {
 
       if (err.code === '23503') {
         return res.status(400).json({
-          error: 'A referenced group or permission no longer exists',
+          error: 'A referenced group no longer exists',
         });
       }
 
       return res.status(500).json({
         error: 'Failed to create group leader',
       });
+
     } finally {
       client.release();
     }
   },
 
+
   // GET /groups
+  // Returns the user's own groups and all their descendants.
   async findAll(req, res) {
     try {
+      if (!req.user || !req.user.id) {
+        return res.status(401).json({
+          error: 'Authentication required',
+        });
+      }
+
+      const accessibleIds = await getVisibleGroupIds(req.user);
+
       const groups = await GroupsModel.findAll();
-      return res.json(groups);
+
+      return res.json(
+        filterAccessibleGroups(groups, accessibleIds)
+      );
+
     } catch (err) {
-      console.error('findAll groups error:', err);
+      console.error('FIND ALL GROUPS ERROR:', {
+        message: err.message,
+        code: err.code,
+        detail: err.detail,
+        stack: err.stack,
+      });
+
       return res.status(500).json({
         error: 'Failed to fetch groups',
       });
     }
   },
 
+
   // GET /groups/parents
+  // Returns accessible root groups.
   async findParents(req, res) {
     try {
+      if (!req.user || !req.user.id) {
+        return res.status(401).json({
+          error: 'Authentication required',
+        });
+      }
+
+      const accessibleIds = await getVisibleGroupIds(req.user);
+
       const groups = await GroupsModel.findParents();
-      return res.json(groups);
+
+      return res.json(
+        filterAccessibleGroups(groups, accessibleIds)
+      );
+
     } catch (err) {
-      console.error('findParents error:', err);
+      console.error('FIND PARENTS ERROR:', err);
+
       return res.status(500).json({
         error: 'Failed to fetch parent groups',
       });
     }
   },
 
+
   // GET /groups/:id
+  // Returns a group only if it belongs to the user's hierarchy.
   async findById(req, res) {
     try {
+      if (!req.user || !req.user.id) {
+        return res.status(401).json({
+          error: 'Authentication required',
+        });
+      }
+
       const groupId = toId(req.params.id);
 
       if (!groupId) {
@@ -385,18 +501,39 @@ const GroupsController = {
         });
       }
 
+      const canView = await GroupHierarchy.canViewGroup(
+        req.user,
+        groupId
+      );
+
+      if (!canView) {
+        return res.status(403).json({
+          error: 'You are not authorized to view this group',
+        });
+      }
+
       return res.json(group);
+
     } catch (err) {
-      console.error('findById error:', err);
+      console.error('FIND GROUP BY ID ERROR:', err);
+
       return res.status(500).json({
         error: 'Failed to fetch group',
       });
     }
   },
 
+
   // GET /groups/:id/children
+  // Returns direct children of an accessible group.
   async findChildren(req, res) {
     try {
+      if (!req.user || !req.user.id) {
+        return res.status(401).json({
+          error: 'Authentication required',
+        });
+      }
+
       const groupId = toId(req.params.id);
 
       if (!groupId) {
@@ -405,17 +542,45 @@ const GroupsController = {
         });
       }
 
+      const parentGroup = await GroupsModel.findById(groupId);
+
+      if (!parentGroup) {
+        return res.status(404).json({
+          error: 'Parent group not found',
+        });
+      }
+
+      const canViewParent = await GroupHierarchy.canViewGroup(
+        req.user,
+        groupId
+      );
+
+      if (!canViewParent) {
+        return res.status(403).json({
+          error: 'You are not authorized to view this group',
+        });
+      }
+
       const children = await GroupsModel.findChildren(groupId);
-      return res.json(children);
+
+      const accessibleIds = await getVisibleGroupIds(req.user);
+
+      return res.json(
+        filterAccessibleGroups(children, accessibleIds)
+      );
+
     } catch (err) {
-      console.error('findChildren error:', err);
+      console.error('FIND CHILDREN ERROR:', err);
+
       return res.status(500).json({
-        error: 'Failed to fetch children',
+        error: 'Failed to fetch child groups',
       });
     }
   },
 
+
   // DELETE /groups/:id
+  // Only the creator, assigned leader, admin or super admin can delete.
   async delete(req, res) {
     try {
       if (!req.user || !req.user.id) {
@@ -432,7 +597,7 @@ const GroupsController = {
         });
       }
 
-      const group = await GroupsModel.delete(groupId);
+      const group = await GroupsModel.findById(groupId);
 
       if (!group) {
         return res.status(404).json({
@@ -440,12 +605,32 @@ const GroupsController = {
         });
       }
 
+      const canManage = await GroupHierarchy.canManageGroup(
+        req.user,
+        groupId
+      );
+
+      if (!canManage) {
+        return res.status(403).json({
+          error: 'You are not authorized to delete this group',
+        });
+      }
+
+      const deletedGroup = await GroupsModel.delete(groupId);
+
+      if (!deletedGroup) {
+        return res.status(404).json({
+          error: 'Group not found',
+        });
+      }
+
       return res.json({
         message: 'Group deleted successfully',
-        group,
+        group: deletedGroup,
       });
+
     } catch (err) {
-      console.error('delete group error:', err);
+      console.error('DELETE GROUP ERROR:', err);
 
       if (err.code === '23503') {
         return res.status(409).json({
