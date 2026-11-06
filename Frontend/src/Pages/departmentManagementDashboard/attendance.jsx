@@ -1,10 +1,10 @@
-function DepartmentAttendance() {
+import SharedAttendance from '../Shared/sharedattendance.jsx';
+
+export default function DepartmentAttendancePage({ groupId }) {
   return (
-    <div>
-      <h2>Department Attendance</h2>
-      <p>Manage department attendance here.</p>
-    </div>
+    <SharedAttendance
+      groupId={groupId}
+      groupType="department"
+    />
   );
 }
-
-export default DepartmentAttendance;

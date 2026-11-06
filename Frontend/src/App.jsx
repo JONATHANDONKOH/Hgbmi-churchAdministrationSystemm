@@ -58,6 +58,7 @@ import DepartmentAttendance from './Pages/departmentManagementDashboard/attendan
 import DepartmentEvents from './Pages/departmentManagementDashboard/events.jsx';
 import DepartmentMeetings from './Pages/departmentManagementDashboard/meetings.jsx';
 import DepartmentMembers from './Pages/departmentManagementDashboard/members.jsx';
+import DepartmentLeaders from './Pages/departmentManagementDashboard/leaders.jsx';
 import DepartmentMessages from './Pages/departmentManagementDashboard/messages.jsx';
 import DepartmentReports from './Pages/departmentManagementDashboard/reports.jsx';
 
@@ -88,19 +89,29 @@ function DashboardPlaceholder({ title }) {
 function AppRoutes() {
   const { user, loading } = useAuth();
 
+  // Get the logged-in user's Fellowship group.
   const fellowshipGroup = user?.groups?.find(
-    (group) => String(group.type).toLowerCase() === 'fellowship'
+    (group) => String(group.type || '').toLowerCase() === 'fellowship'
   );
 
   const fellowshipGroupId =
     fellowshipGroup?.group_id ?? fellowshipGroup?.id;
 
+  // Get the logged-in user's Cell group.
   const cellGroup = user?.groups?.find(
-    (group) => String(group.type).toLowerCase() === 'cell'
+    (group) => String(group.type || '').toLowerCase() === 'cell'
   );
 
   const cellGroupId =
     cellGroup?.group_id ?? cellGroup?.id;
+
+  // Get the logged-in user's Department group.
+  const departmentGroup = user?.groups?.find(
+    (group) => String(group.type || '').toLowerCase() === 'department'
+  );
+
+  const departmentGroupId =
+    departmentGroup?.group_id ?? departmentGroup?.id;
 
   if (loading) {
     return <p>Loading...</p>;
@@ -178,9 +189,7 @@ function AppRoutes() {
       {/* Fellowship Management */}
       <Route
         path="/fellowshipManagementDashboard"
-        element={
-          <FellowshipLayout navigation={fellowshipNavigation} />
-        }
+        element={<FellowshipLayout navigation={fellowshipNavigation} />}
       >
         <Route
           index
@@ -204,7 +213,12 @@ function AppRoutes() {
 
         <Route
           path="events"
-          element={<FellowshipEvents />}
+          element={
+            <FellowshipEvents
+              groupId={fellowshipGroupId}
+              groupName={fellowshipGroup?.name}
+            />
+          }
         />
 
         <Route
@@ -260,7 +274,12 @@ function AppRoutes() {
 
         <Route
           path="events"
-          element={<CellEvents groupId={cellGroupId} />}
+          element={
+            <CellEvents
+              groupId={cellGroupId}
+              groupName={cellGroup?.name}
+            />
+          }
         />
 
         <Route
@@ -288,7 +307,22 @@ function AppRoutes() {
         path="/departmentManagementDashboard/members"
         element={
           <DepartmentLayout navigation={departmentNavigation}>
-            <DepartmentMembers />
+            <DepartmentMembers
+              groupId={departmentGroupId}
+              groupType="department"
+            />
+          </DepartmentLayout>
+        }
+      />
+
+      <Route
+        path="/departmentManagementDashboard/leaders"
+        element={
+          <DepartmentLayout navigation={departmentNavigation}>
+            <DepartmentLeaders
+              groupId={departmentGroupId}
+              groupType="department"
+            />
           </DepartmentLayout>
         }
       />
@@ -306,7 +340,10 @@ function AppRoutes() {
         path="/departmentManagementDashboard/events"
         element={
           <DepartmentLayout navigation={departmentNavigation}>
-            <DepartmentEvents />
+            <DepartmentEvents
+              groupId={departmentGroupId}
+              groupName={departmentGroup?.name}
+            />
           </DepartmentLayout>
         }
       />
@@ -333,17 +370,10 @@ function AppRoutes() {
         path="/departmentManagementDashboard/attendance"
         element={
           <DepartmentLayout navigation={departmentNavigation}>
-            <DepartmentAttendance />
-          </DepartmentLayout>
-        }
-      />
-
-      {/* Department Leaders placeholder */}
-      <Route
-        path="/departmentManagementDashboard/leaders"
-        element={
-          <DepartmentLayout navigation={departmentNavigation}>
-            <DashboardPlaceholder title="Department Leaders" />
+            <DepartmentAttendance
+              groupId={departmentGroupId}
+              groupType="department"
+            />
           </DepartmentLayout>
         }
       />

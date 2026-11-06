@@ -1,0 +1,10 @@
+import MeetingsPage from '../../Components/Meetings/MeetingsPage';
+
+export default function FellowshipMeetingsPage() {
+  return (
+    <MeetingsPage
+      groupType="fellowship"
+      groupLabel="Fellowship"
+    />
+  );
+}

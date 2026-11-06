@@ -1,10 +1,10 @@
-function DepartmentMeetings() {
+﻿import MeetingsPage from '../../Components/meeting/meetingPage.jsx';
+
+export default function DepartmentMeetingsPage() {
   return (
-    <div>
-      <h2>Department Meetings</h2>
-      <p>Manage department meetings here.</p>
-    </div>
+    <MeetingsPage
+      groupType="department"
+      groupLabel="Department"
+    />
   );
 }
-
-export default DepartmentMeetings;

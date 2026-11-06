@@ -1,10 +1,12 @@
-function DepartmentEvents() {
+
+import SharedEvents from '../Shared/sharedEvents.jsx';
+
+export default function DepartmentEvents({ groupId, groupName }) {
   return (
-    <div>
-      <h2>Department Events</h2>
-      <p>Manage department events here.</p>
-    </div>
+    <SharedEvents
+      groupId={groupId}
+      groupType="department"
+      groupName={groupName}
+    />
   );
 }
-
-export default DepartmentEvents;

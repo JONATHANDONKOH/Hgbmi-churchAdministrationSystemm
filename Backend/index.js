@@ -22,6 +22,9 @@ const superAdminRoutes = require('./route/superAdminRoute');
 // Attendance routes
 const attendanceRoutes = require('./route/attendanceSessionRoute');
 
+// Group duties routes
+const groupDutiesRoutes = require('./route/groupDutiesRoute');
+
 // ============================================================
 // EXPRESS APPLICATION
 // ============================================================
@@ -74,6 +77,9 @@ app.use('/api/super-admin', superAdminRoutes);
 // Attendance management
 app.use('/api/attendance', attendanceRoutes);
 
+// Group duties management
+app.use('/api/group-duties', groupDutiesRoutes);
+
 // ============================================================
 // HEALTH CHECK
 // ============================================================
@@ -124,6 +130,7 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-  console.log(`HGBMI Church Administration API running on port ${PORT}`);
+  console.log(
+    `HGBMI Church Administration API running on port ${PORT}`
+  );
 });
-

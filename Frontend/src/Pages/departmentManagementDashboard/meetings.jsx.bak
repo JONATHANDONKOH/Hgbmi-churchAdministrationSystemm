@@ -1,0 +1,10 @@
+import MeetingsPage from '../../Components/Meetings/MeetingsPage';
+
+export default function DepartmentMeetingsPage() {
+  return (
+    <MeetingsPage
+      groupType="department"
+      groupLabel="Department"
+    />
+  );
+}

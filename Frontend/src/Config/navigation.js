@@ -23,8 +23,7 @@ export const cellNavigation = [
 export const departmentNavigation = [
   { label: 'Dashboard', path: '/departmentManagementDashboard' },
   { label: 'Members', path: '/departmentManagementDashboard/members' },
-  { label: 'Leaders', path: '/departmentManagementDashboard/leaders' },
-  { label: 'Meetings', path: '/departmentManagementDashboard/meetings' },
+   { label: 'Meetings', path: '/departmentManagementDashboard/meetings' },
   { label: 'Events', path: '/departmentManagementDashboard/events' },
   { label: 'Attendance', path: '/departmentManagementDashboard/attendance' },
   { label: 'Reports', path: '/departmentManagementDashboard/reports' },

@@ -1,187 +1,276 @@
 const UserGroup = require('../models/userGroupScopeModel');
 
-const toPositiveInt = (value) => {
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-};
-
 const UserGroupController = {
-  // POST /user-groups
+  // Add an existing user to a group.
   async add(req, res) {
     try {
-      const userId = toPositiveInt(req.body?.userId);
-      const groupId = toPositiveInt(req.body?.groupId);
-
-      if (!userId || !groupId) {
-        return res.status(400).json({
-          error: 'userId and groupId are required',
-        });
-      }
+      const userId = Number(req.body.userId);
+      const groupId = Number(req.body.groupId);
 
       if (
-        req.user.role !== 'super_admin' &&
-        req.user.id !== userId
+        !Number.isInteger(userId) ||
+        userId <= 0 ||
+        !Number.isInteger(groupId) ||
+        groupId <= 0
       ) {
-        return res.status(403).json({
-          error: 'You can only manage your own group membership',
+        return res.status(400).json({
+          success: false,
+          message: 'Valid userId and groupId are required.',
         });
       }
 
       const added = await UserGroup.add(userId, groupId);
 
-      if (!added) {
-        return res.status(409).json({
-          error: 'User is already in this group',
-        });
-      }
-
-      return res.status(201).json({
-        message: 'User added to group',
+      return res.status(200).json({
+        success: true,
+        message: added
+          ? 'Member added successfully.'
+          : 'This user is already a member of the group.',
+        alreadyMember: !added,
       });
-    } catch (err) {
-      console.error('userGroup.add error:', err);
+    } catch (error) {
+      console.error('Add group member error:', error);
+
       return res.status(500).json({
-        error: 'Failed to add user to group',
+        success: false,
+        message: 'Failed to add group member.',
       });
     }
   },
 
-  // DELETE /user-groups
-  async remove(req, res) {
+  // Search for a registered user by email.
+  async searchByEmail(req, res) {
     try {
-      const userId = toPositiveInt(req.body?.userId);
-      const groupId = toPositiveInt(req.body?.groupId);
+      const groupId = Number(req.query.groupId);
+      const email = String(req.query.email || '').trim();
 
-      if (!userId || !groupId) {
+      if (
+        !Number.isInteger(groupId) ||
+        groupId <= 0 ||
+        !email
+      ) {
         return res.status(400).json({
-          error: 'userId and groupId are required',
+          success: false,
+          message: 'A valid groupId and email are required.',
         });
       }
 
+      const user = await UserGroup.findMemberByEmail(email, groupId);
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'No registered user was found with that email.',
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        user,
+      });
+    } catch (error) {
+      console.error('Search user by email error:', error);
+
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to search for user.',
+      });
+    }
+  },
+
+  // Add a registered user to a group using their email.
+  async addByEmail(req, res) {
+    try {
+      const email = String(req.body.email || '').trim();
+      const groupId = Number(req.body.groupId);
+
       if (
-        req.user.role !== 'super_admin' &&
-        req.user.id !== userId
+        !email ||
+        !Number.isInteger(groupId) ||
+        groupId <= 0
       ) {
-        return res.status(403).json({
-          error: 'You can only manage your own group membership',
+        return res.status(400).json({
+          success: false,
+          message: 'Email and a valid groupId are required.',
+        });
+      }
+
+      const result = await UserGroup.addByEmail(email, groupId);
+
+      if (!result) {
+        return res.status(404).json({
+          success: false,
+          message: 'No registered user was found with that email.',
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.alreadyMember
+          ? 'This user is already a member of the group.'
+          : 'Member added successfully.',
+        user: result.user,
+        alreadyMember: result.alreadyMember,
+      });
+    } catch (error) {
+      console.error('Add member by email error:', error);
+
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to add member.',
+      });
+    }
+  },
+
+  // Remove a user from a group.
+  async remove(req, res) {
+    try {
+      const userId = Number(req.params.userId);
+      const groupId = Number(req.params.groupId);
+
+      if (
+        !Number.isInteger(userId) ||
+        userId <= 0 ||
+        !Number.isInteger(groupId) ||
+        groupId <= 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: 'Valid userId and groupId are required.',
         });
       }
 
       const removed = await UserGroup.remove(userId, groupId);
 
-      if (!removed) {
-        return res.status(404).json({
-          error: 'Group membership not found',
-        });
-      }
-
-      return res.json({
-        message: 'User removed from group',
+      return res.status(200).json({
+        success: true,
+        message: removed
+          ? 'Member removed successfully.'
+          : 'Member was not found in this group.',
       });
-    } catch (err) {
-      console.error('userGroup.remove error:', err);
+    } catch (error) {
+      console.error('Remove group member error:', error);
+
       return res.status(500).json({
-        error: 'Failed to remove user from group',
+        success: false,
+        message: 'Failed to remove group member.',
       });
     }
   },
 
-  // GET /user-groups/user/:userId
+  // Fetch the group IDs belonging to a user.
   async findGroupsByUser(req, res) {
     try {
-      const userId = toPositiveInt(req.params.userId);
+      const userId = Number(req.params.userId);
 
-      if (!userId) {
+      if (!Number.isInteger(userId) || userId <= 0) {
         return res.status(400).json({
-          error: 'Invalid user id',
-        });
-      }
-
-      if (
-        req.user.role !== 'super_admin' &&
-        req.user.id !== userId
-      ) {
-        return res.status(403).json({
-          error: 'You can only view your own group memberships',
+          success: false,
+          message: 'Valid userId is required.',
         });
       }
 
       const groupIds = await UserGroup.findGroupIdsByUser(userId);
 
-      return res.json({ userId, groupIds });
-    } catch (err) {
-      console.error('userGroup.findGroupsByUser error:', err);
+      return res.status(200).json({
+        success: true,
+        groupIds,
+      });
+    } catch (error) {
+      console.error('Find user groups error:', error);
+
       return res.status(500).json({
-        error: 'Failed to fetch user groups',
+        success: false,
+        message: 'Failed to retrieve user groups.',
       });
     }
   },
 
-  // GET /user-groups/group/:groupId/members
-  // The logged-in user is never included in the result.
-  // Add ?includeSelf=true to return everyone.
+  // Fetch members belonging to a group.
   async findMembersByGroup(req, res) {
     try {
-      const groupId = toPositiveInt(req.params.groupId);
+      const groupId = Number(req.params.groupId);
 
-      if (!groupId) {
+      if (!Number.isInteger(groupId) || groupId <= 0) {
         return res.status(400).json({
-          error: 'Invalid group id',
+          success: false,
+          message: 'Valid groupId is required.',
         });
       }
 
       const members = await UserGroup.findMembersByGroupId(groupId);
 
-      const includeSelf = req.query?.includeSelf === 'true';
-      const loggedInId = req.user?.id;
-
-      if (includeSelf || loggedInId === undefined || loggedInId === null) {
-        return res.json(members);
-      }
-
-      const visibleMembers = members.filter((member) => {
-        const memberUserId = member?.user_id ?? member?.id;
-
-        return String(memberUserId) !== String(loggedInId);
+      return res.status(200).json({
+        success: true,
+        members,
       });
+    } catch (error) {
+      console.error('Find group members error:', error);
 
-      return res.json(visibleMembers);
-    } catch (err) {
-      console.error('userGroup.findMembersByGroup error:', err);
       return res.status(500).json({
-        error: 'Failed to fetch group members',
+        success: false,
+        message: 'Failed to retrieve group members.',
       });
     }
   },
 
-  // GET /user-groups/check
+  // Fetch users who are not yet members of a group.
+  async findAvailableMembers(req, res) {
+    try {
+      const groupId = Number(req.query.groupId);
+
+      if (!Number.isInteger(groupId) || groupId <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Valid groupId is required.',
+        });
+      }
+
+      const members =
+        await UserGroup.findAvailableMembersByGroupId(groupId);
+
+      return res.status(200).json({
+        success: true,
+        members,
+      });
+    } catch (error) {
+      console.error('Find available members error:', error);
+
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to retrieve available members.',
+      });
+    }
+  },
+
+  // Check whether the logged-in user belongs to a group.
   async checkAccess(req, res) {
     try {
-      const userId = toPositiveInt(req.query.userId);
-      const groupId = toPositiveInt(req.query.groupId);
+      const groupId = Number(req.params.groupId);
+      const userId = Number(req.user.id);
 
-      if (!userId || !groupId) {
+      if (!Number.isInteger(groupId) || groupId <= 0) {
         return res.status(400).json({
-          error: 'userId and groupId are required',
+          success: false,
+          message: 'Valid groupId is required.',
         });
       }
 
-      if (
-        req.user.role !== 'super_admin' &&
-        req.user.id !== userId
-      ) {
-        return res.status(403).json({
-          error: 'You can only check your own group membership',
-        });
-      }
+      const hasAccess = await UserGroup.hasGroupAccess(
+        userId,
+        groupId
+      );
 
-      const hasAccess = await UserGroup.hasGroupAccess(userId, groupId);
+      return res.status(200).json({
+        success: true,
+        hasAccess,
+      });
+    } catch (error) {
+      console.error('Check group access error:', error);
 
-      return res.json({ userId, groupId, hasAccess });
-    } catch (err) {
-      console.error('userGroup.checkAccess error:', err);
       return res.status(500).json({
-        error: 'Failed to check group membership',
+        success: false,
+        message: 'Failed to check group access.',
       });
     }
   },

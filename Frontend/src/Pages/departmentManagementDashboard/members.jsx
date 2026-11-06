@@ -1,10 +1,11 @@
-function DepartmentMembers() {
+import SharedMembersDandM from '../Shared/sharedmembersD&M.jsx';
+
+export default function DepartmentMembers({ groupId, onMessage }) {
   return (
-    <div>
-      <h2>Department Members</h2>
-      <p>View and manage existing church members in this department.</p>
-    </div>
+    <SharedMembersDandM
+      groupId={groupId}
+      groupType="department"
+      onMessage={onMessage}
+    />
   );
 }
-
-export default DepartmentMembers;
