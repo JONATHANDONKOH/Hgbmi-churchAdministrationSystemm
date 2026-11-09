@@ -1,10 +1,5 @@
-function DepartmentReports() {
-  return (
-    <div>
-      <h2>Department Reports</h2>
-      <p>View department reports here.</p>
-    </div>
-  );
-}
+import SharedReportDM from '../Shared/sharedreportD&M';
 
-export default DepartmentReports;
+export default function DepartmentReports() {
+  return <SharedReportDM groupType="department" />;
+}

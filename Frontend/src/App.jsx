@@ -23,6 +23,7 @@ import SuperAdminMessages from './Pages/superAdmin/messages.jsx';
 import FellowshipLayout from './component/fellowshipLayout.jsx';
 import CellLayout from './component/cellLayout.jsx';
 import DepartmentLayout from './component/departmentLayout.jsx';
+import MinistryLayout from './component/ministriesLayout.jsx';
 import AdministrationManagementLayout from './component/administrationManagementLayout.jsx';
 
 // Navigation
@@ -30,6 +31,7 @@ import {
   fellowshipNavigation,
   cellNavigation,
   departmentNavigation,
+  ministryNavigation,
   administrationManagementNavigation,
 } from './Config/navigation.js';
 
@@ -54,6 +56,7 @@ import CellMessages from './Pages/cellManagementDashboard/cellMessage.jsx';
 import CellAttendance from './Pages/cellManagementDashboard/cellAttendance.jsx';
 
 // Department pages
+import DepartmentPerformanceDashboard from './Pages/departmentManagementDashboard/dashboard.jsx';
 import DepartmentAttendance from './Pages/departmentManagementDashboard/attendance.jsx';
 import DepartmentEvents from './Pages/departmentManagementDashboard/events.jsx';
 import DepartmentMeetings from './Pages/departmentManagementDashboard/meetings.jsx';
@@ -61,6 +64,14 @@ import DepartmentMembers from './Pages/departmentManagementDashboard/members.jsx
 import DepartmentLeaders from './Pages/departmentManagementDashboard/leaders.jsx';
 import DepartmentMessages from './Pages/departmentManagementDashboard/messages.jsx';
 import DepartmentReports from './Pages/departmentManagementDashboard/reports.jsx';
+
+// Ministry pages
+import MinistryPerformanceDashboard from './Pages/ministriesManagementDashboard/ministrymanagementDashboard.jsx';
+import MinistryAttendance from './Pages/ministriesManagementDashboard/attendance.jsx';
+import MinistryEvents from './Pages/ministriesManagementDashboard/events.jsx';
+import MinistryMeetings from './Pages/ministriesManagementDashboard/meetings.jsx';
+import MinistryMembers from './Pages/ministriesManagementDashboard/members.jsx';
+import MinistryReports from './Pages/ministriesManagementDashboard/report.jsx';
 
 // Administration pages
 import AdministrationManagementDashboard from './Pages/administrationManagement/administrationManagementDashboard.jsx';
@@ -112,6 +123,14 @@ function AppRoutes() {
 
   const departmentGroupId =
     departmentGroup?.group_id ?? departmentGroup?.id;
+
+  // Get the logged-in user's Ministry group.
+  const ministryGroup = user?.groups?.find(
+    (group) => String(group.type || '').toLowerCase() === 'ministry'
+  );
+
+  const ministryGroupId =
+    ministryGroup?.group_id ?? ministryGroup?.id;
 
   if (loading) {
     return <p>Loading...</p>;
@@ -193,7 +212,11 @@ function AppRoutes() {
       >
         <Route
           index
-          element={<FellowshipManagementDashboard />}
+          element={
+            <FellowshipManagementDashboard
+              groupId={fellowshipGroupId}
+            />
+          }
         />
 
         <Route
@@ -249,7 +272,11 @@ function AppRoutes() {
       >
         <Route
           index
-          element={<CellDashboard />}
+          element={
+            <CellDashboard
+              groupId={cellGroupId}
+            />
+          }
         />
 
         <Route
@@ -298,7 +325,9 @@ function AppRoutes() {
         path="/departmentManagementDashboard"
         element={
           <DepartmentLayout navigation={departmentNavigation}>
-            <DashboardPlaceholder title="Department Dashboard" />
+            <DepartmentPerformanceDashboard
+              groupId={departmentGroupId}
+            />
           </DepartmentLayout>
         }
       />
@@ -375,6 +404,79 @@ function AppRoutes() {
               groupType="department"
             />
           </DepartmentLayout>
+        }
+      />
+
+      {/* Ministry Management */}
+      <Route
+        path="/ministryManagementDashboard"
+        element={
+          <MinistryLayout navigation={ministryNavigation}>
+            <MinistryPerformanceDashboard
+              groupId={ministryGroupId}
+            />
+          </MinistryLayout>
+        }
+      />
+
+      <Route
+        path="/ministryManagementDashboard/members"
+        element={
+          <MinistryLayout navigation={ministryNavigation}>
+            <MinistryMembers
+              groupId={ministryGroupId}
+            />
+          </MinistryLayout>
+        }
+      />
+
+      <Route
+        path="/ministryManagementDashboard/meetings"
+        element={
+          <MinistryLayout navigation={ministryNavigation}>
+            <MinistryMeetings />
+          </MinistryLayout>
+        }
+      />
+
+      <Route
+        path="/ministryManagementDashboard/events"
+        element={
+          <MinistryLayout navigation={ministryNavigation}>
+            <MinistryEvents
+              groupId={ministryGroupId}
+              groupName={ministryGroup?.name}
+            />
+          </MinistryLayout>
+        }
+      />
+
+      <Route
+        path="/ministryManagementDashboard/attendance"
+        element={
+          <MinistryLayout navigation={ministryNavigation}>
+            <MinistryAttendance
+              groupId={ministryGroupId}
+            />
+          </MinistryLayout>
+        }
+      />
+
+      <Route
+        path="/ministryManagementDashboard/reports"
+        element={
+          <MinistryLayout navigation={ministryNavigation}>
+            <MinistryReports />
+          </MinistryLayout>
+        }
+      />
+
+      <Route
+        path="/ministryManagementDashboard/messaging"
+        element={
+          <MinistryLayout navigation={ministryNavigation}>
+            <DashboardPlaceholder title="Ministry Messaging" />
+          </MinistryLayout>
         }
       />
 
@@ -457,11 +559,6 @@ function AppRoutes() {
             replace
           />
         }
-      />
-
-      <Route
-        path="/ministryManagementDashboard"
-        element={<DashboardPlaceholder title="Ministry Dashboard" />}
       />
 
       <Route

@@ -1,3 +1,4 @@
+
 export const fellowshipNavigation = [
   { label: 'Dashboard', path: '/fellowshipManagementDashboard' },
   { label: 'Members', path: '/fellowshipManagementDashboard/members' },
@@ -23,11 +24,21 @@ export const cellNavigation = [
 export const departmentNavigation = [
   { label: 'Dashboard', path: '/departmentManagementDashboard' },
   { label: 'Members', path: '/departmentManagementDashboard/members' },
-   { label: 'Meetings', path: '/departmentManagementDashboard/meetings' },
+  { label: 'Meetings', path: '/departmentManagementDashboard/meetings' },
   { label: 'Events', path: '/departmentManagementDashboard/events' },
   { label: 'Attendance', path: '/departmentManagementDashboard/attendance' },
   { label: 'Reports', path: '/departmentManagementDashboard/reports' },
   { label: 'Messaging', path: '/departmentManagementDashboard/messaging' },
+];
+
+export const ministryNavigation = [
+  { label: 'Dashboard', path: '/ministryManagementDashboard' },
+  { label: 'Members', path: '/ministryManagementDashboard/members' },
+  { label: 'Meetings', path: '/ministryManagementDashboard/meetings' },
+  { label: 'Events', path: '/ministryManagementDashboard/events' },
+  { label: 'Attendance', path: '/ministryManagementDashboard/attendance' },
+  { label: 'Reports', path: '/ministryManagementDashboard/reports' },
+  { label: 'Messaging', path: '/ministryManagementDashboard/messaging' },
 ];
 
 export const superAdminNavigation = [

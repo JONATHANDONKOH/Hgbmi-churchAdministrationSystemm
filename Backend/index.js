@@ -4,6 +4,11 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
+const http = require('http');
+const jwt = require('jsonwebtoken');
+const { Server } = require('socket.io');
+
+const User = require('./models/usersModel');
 
 // ============================================================
 // ROUTE IMPORTS
@@ -32,24 +37,26 @@ const groupDutiesRoutes = require('./route/groupDutiesRoute');
 const app = express();
 
 // ============================================================
+// CORS CONFIGURATION
+// ============================================================
+
+const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+
+const corsOptions = {
+  origin: CLIENT_URL,
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+
+// ============================================================
 // MIDDLEWARE
 // ============================================================
 
-// CORS configuration
-app.use(
-  cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
-    credentials: true,
-  })
-);
-
-// Parse cookies
 app.use(cookieParser());
 
-// Parse JSON request bodies
 app.use(express.json());
 
-// Parse URL-encoded request bodies
 app.use(express.urlencoded({ extended: true }));
 
 // ============================================================
@@ -87,7 +94,7 @@ app.use('/api/group-duties', groupDutiesRoutes);
 app.get('/', (req, res) => {
   res.status(200).json({
     success: true,
-    message: 'HGBMI Church Administration API is running',
+    message: 'HGBMI Church Administration API is running'
   });
 });
 
@@ -99,7 +106,7 @@ app.use((req, res) => {
   res.status(404).json({
     success: false,
     message: 'Route not found',
-    path: req.originalUrl,
+    path: req.originalUrl
   });
 });
 
@@ -119,7 +126,81 @@ app.use((err, req, res, next) => {
     message:
       process.env.NODE_ENV === 'production'
         ? 'Something went wrong'
-        : err.message || 'Something went wrong',
+        : err.message || 'Something went wrong'
+  });
+});
+
+// ============================================================
+// CREATE HTTP SERVER
+// ============================================================
+
+const server = http.createServer(app);
+
+// ============================================================
+// INITIALIZE SOCKET.IO
+// ============================================================
+
+const io = new Server(server, {
+  cors: corsOptions
+});
+
+// Make Socket.IO available to other backend modules later.
+app.set('io', io);
+
+// ============================================================
+// SOCKET.IO AUTHENTICATION
+// ============================================================
+
+io.use(async (socket, next) => {
+  try {
+    const cookieHeader = socket.handshake.headers.cookie || '';
+
+    const tokenCookie = cookieHeader
+      .split(';')
+      .map(cookie => cookie.trim())
+      .find(cookie => cookie.startsWith('token='));
+
+    if (!tokenCookie) {
+      return next(new Error('Not authenticated: token missing'));
+    }
+
+    const token = decodeURIComponent(
+      tokenCookie.substring('token='.length)
+    );
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      return next(new Error('Not authenticated: user not found'));
+    }
+
+    // Attach authenticated user to socket.
+    socket.user = user;
+
+    next();
+
+  } catch (error) {
+    console.error('Socket authentication error:', error.message);
+
+    next(new Error('Not authenticated: invalid or expired token'));
+  }
+});
+
+// ============================================================
+// SOCKET CONNECTION
+// ============================================================
+
+io.on('connection', (socket) => {
+  console.log(
+    `User ${socket.user.id} connected through Socket.IO`
+  );
+
+  socket.on('disconnect', (reason) => {
+    console.log(
+      `User ${socket.user.id} disconnected: ${reason}`
+    );
   });
 });
 
@@ -129,8 +210,12 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(
     `HGBMI Church Administration API running on port ${PORT}`
+  );
+
+  console.log(
+    `Socket.IO server running on port ${PORT}`
   );
 });

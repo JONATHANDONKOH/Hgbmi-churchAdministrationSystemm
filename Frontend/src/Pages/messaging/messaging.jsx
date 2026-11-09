@@ -1,0 +1,243 @@
+import { useCallback, useEffect, useState } from 'react';
+import { useAuth } from '../../Context/authContext.jsx';
+
+import ConversationList from '../../components/messages/conversationList';
+import ChatWindow from '../../components/messages/chatWindow';
+import NewChatModal from '../../components/messages/newchartModel';
+import NewGroupChatModal from '../../components/messages/newgroupChartModel';
+import BroadcastPanel from '../../components/messages/broadcastPanel';
+
+import MessagingAPI from '../../services/messagingApi';
+import { connectSocket } from '../../services/socket';
+
+import '../../styles/messagingStyle.css';
+
+function Messaging() {
+  const { user } = useAuth();
+
+  const [activeTab, setActiveTab] = useState('chat');
+  const [conversations, setConversations] = useState([]);
+  const [selectedConversation, setSelectedConversation] = useState(null);
+  const [messages, setMessages] = useState([]);
+
+  const [loadingConversations, setLoadingConversations] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+
+  const [showNewChat, setShowNewChat] = useState(false);
+  const [showNewGroup, setShowNewGroup] = useState(false);
+
+  const [error, setError] = useState('');
+
+  const currentUserId = user?.id;
+
+  const loadConversations = useCallback(async () => {
+    try {
+      setLoadingConversations(true);
+      setError('');
+
+      const data = await MessagingAPI.getConversations();
+      setConversations(data.conversations || []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoadingConversations(false);
+    }
+  }, []);
+
+  const loadMessages = useCallback(async (conversationId) => {
+    try {
+      setLoadingMessages(true);
+      setError('');
+
+      const data = await MessagingAPI.getMessages(conversationId);
+      setMessages(data.messages || []);
+    } catch (err) {
+      setError(err.message);
+      setMessages([]);
+    } finally {
+      setLoadingMessages(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadConversations();
+  }, [loadConversations]);
+
+  useEffect(() => {
+    if (!selectedConversation?.id) {
+      setMessages([]);
+      return;
+    }
+
+    loadMessages(selectedConversation.id);
+  }, [selectedConversation?.id, loadMessages]);
+
+  // Establish one authenticated Socket.IO connection.
+  useEffect(() => {
+    const socket = connectSocket();
+
+    function handleConnectError(err) {
+      console.error('Messaging socket connection failed:', err.message);
+    }
+
+    socket.on('connect_error', handleConnectError);
+
+    return () => {
+      socket.off('connect_error', handleConnectError);
+    };
+  }, []);
+
+  // Join the selected conversation room and listen for new messages.
+  useEffect(() => {
+    if (!selectedConversation?.id) return;
+
+    const socket = connectSocket();
+    const conversationId = selectedConversation.id;
+
+    function handleNewMessage(message) {
+      if (
+        String(message.conversation_id) !== String(conversationId)
+      ) {
+        return;
+      }
+
+      setMessages((current) => {
+        const alreadyExists = current.some(
+          (item) => String(item.id) === String(message.id)
+        );
+
+        return alreadyExists ? current : [...current, message];
+      });
+
+      setConversations((current) =>
+        current.map((conversation) =>
+          String(conversation.id) === String(conversationId)
+            ? {
+                ...conversation,
+                last_message: message.content,
+              }
+            : conversation
+        )
+      );
+    }
+
+    socket.emit('join_conversation', { conversationId });
+    socket.on('new_message', handleNewMessage);
+
+    return () => {
+      socket.emit('leave_conversation', { conversationId });
+      socket.off('new_message', handleNewMessage);
+    };
+  }, [selectedConversation?.id]);
+
+  async function handleSendMessage(content) {
+    if (!selectedConversation?.id) return;
+
+    const data = await MessagingAPI.sendMessage(
+      selectedConversation.id,
+      content
+    );
+
+    const savedMessage = data.message;
+
+    if (savedMessage) {
+      setMessages((current) => {
+        const exists = current.some(
+          (message) => String(message.id) === String(savedMessage.id)
+        );
+
+        return exists ? current : [...current, savedMessage];
+      });
+    }
+
+    await loadConversations();
+  }
+
+  async function handleConversationCreated(conversation) {
+    if (!conversation?.id) {
+      throw new Error('The server did not return a conversation.');
+    }
+
+    await loadConversations();
+    setActiveTab('chat');
+    setSelectedConversation(conversation);
+  }
+
+  return (
+    <div className="messaging-page">
+      <header className="messaging-page-header">
+        <div>
+          <p className="messaging-eyebrow">Communication</p>
+          <h1>Messaging</h1>
+          <p>Connect with people across the church.</p>
+        </div>
+      </header>
+
+      <div className="messaging-tabs">
+        <button
+          type="button"
+          className={activeTab === 'chat' ? 'active' : ''}
+          onClick={() => setActiveTab('chat')}
+        >
+          Chats
+        </button>
+
+        <button
+          type="button"
+          className={activeTab === 'broadcast' ? 'active' : ''}
+          onClick={() => setActiveTab('broadcast')}
+        >
+          Broadcasting
+        </button>
+      </div>
+
+      {error && (
+        <div className="messaging-error-banner">
+          {error}
+          <button type="button" onClick={() => setError('')}>
+            ×
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'chat' ? (
+        <div className="messaging-chat-layout">
+          <ConversationList
+            conversations={conversations}
+            selectedConversation={selectedConversation}
+            onSelect={setSelectedConversation}
+            onNewChat={() => setShowNewChat(true)}
+            onNewGroup={() => setShowNewGroup(true)}
+            loading={loadingConversations}
+          />
+
+          <ChatWindow
+            conversation={selectedConversation}
+            messages={messages}
+            currentUserId={currentUserId}
+            onSend={handleSendMessage}
+            loading={loadingMessages}
+          />
+        </div>
+      ) : (
+        <BroadcastPanel />
+      )}
+
+      {showNewChat && (
+        <NewChatModal
+          onClose={() => setShowNewChat(false)}
+          onCreated={handleConversationCreated}
+        />
+      )}
+
+      {showNewGroup && (
+        <NewGroupChatModal
+          onClose={() => setShowNewGroup(false)}
+          onCreated={handleConversationCreated}
+        />
+      )}
+    </div>
+  );
+}
+
+export default Messaging;
